@@ -1,0 +1,589 @@
+scilla_version 0
+
+import IntUtils
+
+library BetGame
+
+let one_msg =
+  fun (msg: Message) =>
+  let nil_msg = Nil {Message} in
+  Cons {Message} msg nil_msg
+
+let success = Uint32 200
+let unauthorized = Uint32 403
+let unavailable = Uint32 404
+let already_exists = Uint32 409
+
+let loose = Uint32 13
+
+let zero = Uint32 0
+let amount_zero = Uint128 0
+let incr = Uint32 1
+let host_fraction = Uint128 10
+
+(* Game Status *)
+let open_for_bet = Uint32 0
+let started = Uint32 1
+let completed = Uint32 2
+let partial_verified = Uint32 3
+let verified = Uint32 4
+
+(* Game Bet Status *)
+let not_redeemed = Uint32 0
+let redeemed = Uint32 1
+
+let winPool = Uint32 0
+let loosePool = Uint32 1
+let drawPool = Uint32 2
+
+type GameData = | GameData of String String String ByStr20
+(*type GameData = | GameData of HomeTeam AwayTeam StartingOn HostedBy*)
+type Bet = | Bet of String ByStr20 Uint32 Uint128
+(* Bet = | Bet of GameID PlayerAddress BetSelected Amount*)
+type Result = | Result of String Uint32
+(*type Result = | Result of FinalScore Winner*)
+
+contract BetGame
+(owner: ByStr20,
+treasury: ByStr20,
+oracle: ByStr20)
+                          
+field playerBets: Map ByStr20 (Map String String) (* Address => GameID => BetID*)
+                          = Emp ByStr20 (Map String String)
+                    
+field games: Map String GameData (* GameID => GameData*)
+                = Emp String GameData
+                
+field gameStatus: Map String Uint32 (* GameID => Status*)
+                = Emp String Uint32
+                
+field results: Map String Result (* GameID => Result*)
+                = Emp String Result
+              
+field bets: Map String Bet (* BetID => Bet*)
+                = Emp String Bet
+                
+field betStatus: Map String Uint32 (* BetID => Status*)
+                = Emp String Uint32
+                
+field totalWinPoolBet: Map String Uint32 (* GameID => Count*)
+                = Emp String Uint32
+                
+field totalLoosePoolBet: Map String Uint32 (* GameID => Count*)
+                = Emp String Uint32
+                
+field totalDrawPoolBet: Map String Uint32 (* GameID => Count*)
+                = Emp String Uint32
+                
+field totalWinPoolBetAmount: Map String Uint128 (* GameID => Amount*)
+                = Emp String Uint128
+                
+field totalLoosePoolBetAmount: Map String Uint128 (* GameID => Amount*)
+                = Emp String Uint128
+                
+field totalDrawPoolBetAmount: Map String Uint128 (* GameID => Amount*)
+                = Emp String Uint128
+                
+field totalDistributePool: Map String Uint128 (* GameID => Amount*)
+                = Emp String Uint128
+                
+field totalPool: Map String Uint128 (* GameID => Amount*)
+                = Emp String Uint128
+                
+field oracleAddress : ByStr20 = oracle
+
+procedure createNewGame(gameID: String, gameData: GameData)
+    games[gameID] := gameData;
+    gameStatus[gameID] := open_for_bet;
+    msg = {_tag: ""; 
+          _recipient: _sender; 
+          _amount: Uint128 0; 
+          code: success};
+    msgs = one_msg msg;
+    send msgs
+end
+
+procedure initPool(gameID: String)
+  totalWinPoolBet[gameID] := zero;
+  totalLoosePoolBet[gameID] := zero;
+  totalDrawPoolBet[gameID] := zero;
+  totalWinPoolBetAmount[gameID] := amount_zero;
+  totalDrawPoolBetAmount[gameID] := amount_zero;
+  totalWinPoolBetAmount[gameID] := amount_zero
+end
+
+transition createGame(gameID: String, homeTeam: String, awayTeam: String, startingOn: String)
+  game_check <- games[gameID];
+  match game_check with
+    | Some v =>
+      msg = {_tag:""; _recipient: _sender; _amount: amount_zero; code: already_exists};
+      msgs = one_msg msg;
+      send msgs
+    | None =>
+      new_game = GameData homeTeam awayTeam startingOn _sender;
+      createNewGame gameID new_game;
+      initPool gameID
+    end
+end
+
+procedure createBet(betID: String, gameID: String, bet: Bet)
+    accept;
+    bets[betID] := bet;
+    playerBets[_sender][gameID] := betID;
+    betStatus[betID] := not_redeemed;
+    
+    msg = {_tag: "depositFund"; 
+          _recipient: treasury; 
+          _amount: _amount};
+    msgs = one_msg msg;
+    send msgs
+end
+  
+  procedure placeBet(gameID: String, betID: String, betSelected: Uint32)
+    new_bet = Bet gameID _sender betSelected _amount;
+    createBet betID gameID new_bet
+  end
+  
+  procedure updatePool(gameID: String, betSelected: Uint32)
+    is_Win = builtin eq betSelected winPool;
+    match is_Win with
+      | True =>
+        recentWinPoolBets <- totalWinPoolBet[gameID];
+        match recentWinPoolBets with
+          | Some v =>
+            addWinPoolBet = builtin add v incr;
+            totalWinPoolBet[gameID] := addWinPoolBet
+          | None =>
+            addWinPoolBet = builtin add zero incr;
+            totalWinPoolBet[gameID] := addWinPoolBet
+        end;
+        recentWinPoolBetsAmount <- totalWinPoolBetAmount[gameID];
+        match recentWinPoolBetsAmount with
+          | Some v =>
+            addWinPoolBetAmount = builtin add v _amount;
+            totalWinPoolBetAmount[gameID] := addWinPoolBetAmount
+          | None =>
+            addWinPoolBetAmount = builtin add amount_zero _amount;
+            totalWinPoolBetAmount[gameID] := addWinPoolBetAmount
+        end
+      | False =>
+        is_Loose = builtin eq betSelected loosePool;
+        match is_Loose with
+          | True =>
+            recentLoosePoolBets <- totalLoosePoolBet[gameID];
+            match recentLoosePoolBets with
+              | Some v =>
+                addLoosePoolBet = builtin add v incr;
+                totalLoosePoolBet[gameID] := addLoosePoolBet
+              | None =>
+                addLoosePoolBet = builtin add zero incr;
+                totalLoosePoolBet[gameID] := addLoosePoolBet
+            end;
+            recentLoosePoolBetsAmount <- totalLoosePoolBetAmount[gameID];
+            match recentLoosePoolBetsAmount with
+              | Some v =>
+                addLoosePoolBetAmount = builtin add v _amount;
+                totalLoosePoolBetAmount[gameID] := addLoosePoolBetAmount
+              | None =>
+                addLoosePoolBetAmount = builtin add amount_zero _amount;
+                totalLoosePoolBetAmount[gameID] := addLoosePoolBetAmount
+            end
+          | False =>
+            is_Draw = builtin eq betSelected drawPool;
+            match is_Draw with
+              | True =>
+                recentDrawPoolBets <- totalDrawPoolBet[gameID];
+                match recentDrawPoolBets with
+                  | Some v =>
+                    addDrawPoolBet = builtin add v incr;
+                    totalDrawPoolBet[gameID] := addDrawPoolBet
+                  | None =>
+                    addDrawPoolBet = builtin add zero incr;
+                    totalDrawPoolBet[gameID] := addDrawPoolBet
+                end;
+                recentDrawPoolBetsAmount <- totalDrawPoolBetAmount[gameID];
+                match recentDrawPoolBetsAmount with
+                  | Some v =>
+                    addDrawPoolBetAmount = builtin add v _amount;
+                    totalDrawPoolBetAmount[gameID] := addDrawPoolBetAmount
+                  | None =>
+                    addDrawPoolBetAmount = builtin add amount_zero _amount;
+                    totalDrawPoolBetAmount[gameID] := addDrawPoolBetAmount
+                end
+              | False =>
+                msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
+                msgs = one_msg msg;
+                send msgs
+            end
+        end
+    end
+  end
+  
+  transition bet(gameID: String, betID: String, betSelected: Uint32)
+    bet_check <- bets[gameID];
+    match bet_check with
+      | Some v =>
+        msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: already_exists};
+        msgs = one_msg msg;
+        send msgs
+      | None =>
+        tempGamesForResponse <- gameStatus[gameID];
+        match tempGamesForResponse with
+        | Some v =>
+          is_open_for_bet = builtin eq open_for_bet v;
+          match is_open_for_bet with
+            | True =>
+              updatePool gameID betSelected;
+              placeBet gameID betID betSelected
+            | False =>
+              msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
+              msgs = one_msg msg;
+              send msgs
+          end
+        | None =>
+          msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
+          msgs = one_msg msg;
+          send msgs
+        end
+    end
+  end
+
+transition gameStarted(gameID: String)
+  temp_oracleAddress <- oracleAddress;
+  is_oracle = builtin eq temp_oracleAddress _sender;
+  match is_oracle with
+    | True =>
+      gameStatus[gameID] := started;
+      msg = {_tag: ""; 
+                    _recipient: _sender; 
+                    _amount: Uint128 0; 
+                    code: success};
+      msgs = one_msg msg;
+      send msgs
+    | False =>
+      msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
+      msgs = one_msg msg;
+      send msgs
+  end
+end
+
+procedure flashResult(gameID: String, finalScore: String, winner: Uint32)
+  new_result = Result finalScore winner;
+  results[gameID] := new_result
+end
+
+transition flashGameResults(gameID: String, finalScore: String, winner: Uint32)
+  tempGame <- games[gameID];
+    match tempGame with
+    | Some v =>
+      match v with
+        | GameData homeTeam awayTeam startingOn hostedBy =>
+          temp_oracleAddress <- oracleAddress;
+          is_oracle = builtin eq temp_oracleAddress _sender;
+          match is_oracle with
+            | True =>
+              gameStatus[gameID] := completed;
+              flashResult gameID finalScore winner;
+              msg = {_tag: ""; 
+                            _recipient: _sender; 
+                            _amount: Uint128 0; 
+                            code: success};
+              msgs = one_msg msg;
+              send msgs
+            | False =>
+              msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
+              msgs = one_msg msg;
+              send msgs
+          end
+      end
+    | None =>
+      msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
+      msgs = one_msg msg;
+      send msgs
+    end
+end
+
+procedure setTotalPool(gameID: String, totalAmount: Uint128)
+  percentage = Uint128 80;
+  total = Uint128 100;
+  totalPoolAmount = builtin mul percentage totalAmount;
+  totalPoolFraction = builtin div totalPoolAmount total;
+  
+  totalDistributePool[gameID] := totalPoolFraction
+end
+
+procedure buildPool(gameID: String, winner: Uint32)
+    temp_totalWinPoolBetAmount <- totalWinPoolBetAmount[gameID];
+    temp_totalLoosePoolBetAmount <- totalLoosePoolBetAmount[gameID];
+    temp_totalDrawPoolBetAmount <- totalDrawPoolBetAmount[gameID];
+    
+    match temp_totalWinPoolBetAmount with
+      | Some v1 =>
+        match temp_totalLoosePoolBetAmount with
+        | Some v2 =>
+          match temp_totalDrawPoolBetAmount with
+          | Some v3 =>
+            is_Win = builtin eq winner winPool;
+            match is_Win with
+              | True =>
+                temp_totalWinPool = builtin add v2 v3;
+                setTotalPool gameID temp_totalWinPool;
+                totalPool[gameID] := v1
+              | False =>
+                is_Loose = builtin eq winner loosePool;
+                match is_Loose with
+                  | True =>
+                    temp_totalLoosePool = builtin add v1 v3;
+                    setTotalPool gameID temp_totalLoosePool;
+                    totalPool[gameID] := v2
+                  | False =>
+                    is_Draw = builtin eq winner drawPool;
+                    match is_Draw with
+                      | True =>
+                        temp_totalDrawPool = builtin add v1 v2;
+                        setTotalPool gameID temp_totalDrawPool;
+                        totalPool[gameID] := v3
+                      | False =>
+                        msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
+                        msgs = one_msg msg;
+                        send msgs
+                    end
+                end
+              end
+          | None =>
+            e = {_eventname: "No draw pool"};
+            event e
+          end
+        | None =>
+          e = {_eventname: "No loose pool"};
+          event e
+        end
+      | None =>
+        e = {_eventname: "No win pool"};
+        event e
+    end
+  end
+  
+procedure callForTreasury(redeem: Uint128)
+  msg = {_tag: "withdrawFund"; 
+          _recipient: treasury; 
+          _amount: _amount;
+          address: _sender;
+          amount: redeem
+  };
+  msgs = one_msg msg;
+  send msgs
+end
+
+procedure calculateRedeemFund(gameId: String, amount: Uint128)
+  temp_totalPool <- totalPool[gameId];
+  temp_totalDistributePool <- totalDistributePool[gameId];
+  match temp_totalPool with
+    | Some v1 =>
+      match temp_totalDistributePool with
+        | Some v2 =>
+          temp_factor = builtin mul amount v2;
+          temp_fraction = builtin div temp_factor v1;
+          total_redeem = builtin add temp_fraction amount;
+          callForTreasury total_redeem
+        | None =>
+          e = {_eventname: "No pool"};
+          event e
+      end
+    | None =>
+      e = {_eventname: "No pool"};
+      event e
+  end
+end
+
+procedure redeemHost(gameID: String)
+  tempGame <- games[gameID];
+  match tempGame with
+  | Some v =>
+    match v with
+      | GameData homeTeam awayTeam startingOn hostedBy =>
+        is_host = builtin eq hostedBy _sender;
+        match is_host with
+          | True =>
+            temp_totalDistributePool <- totalDistributePool[gameID];
+            match temp_totalDistributePool with
+              | Some v2 =>
+                temp_fraction = builtin div v2 host_fraction;
+                msg = {_tag: "withdrawFund"; 
+                    _recipient: treasury; 
+                    _amount: _amount;
+                    address: _sender;
+                    amount: temp_fraction
+                };
+                msgs = one_msg msg;
+                send msgs
+              | None =>
+                msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
+                msgs = one_msg msg;
+                send msgs
+            end
+          | False =>
+            msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
+            msgs = one_msg msg;
+            send msgs
+        end
+    end
+  | None =>
+    msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
+    msgs = one_msg msg;
+    send msgs
+  end
+end
+
+procedure markGameAsVerified(gameID: String, winner: Uint32)
+  temp_result <- results[gameID];
+  match  temp_result with
+    | Some v =>
+      isOwner = builtin eq owner _sender;
+      match isOwner with
+        | True =>
+          temp_gameStatus <- gameStatus[gameID];
+          match temp_gameStatus with
+            | Some v =>
+              hasHostVerified = builtin eq v partial_verified;
+              match hasHostVerified with
+                | True =>
+                  gameStatus[gameID] := verified;
+                  buildPool gameID winner;
+                  redeemHost gameID
+                | False =>
+                  msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
+                  msgs = one_msg msg;
+                  send msgs
+                end
+            | None =>
+              msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
+              msgs = one_msg msg;
+              send msgs
+            end
+        | False =>
+          tempGame <- games[gameID];
+          match tempGame with
+          | Some v =>
+            match v with
+              | GameData homeTeam awayTeam startingOn hostedBy =>
+                is_host = builtin eq hostedBy _sender;
+                match is_host with
+                    | True =>
+                    gameStatus[gameID] := partial_verified
+                    | False =>
+                    msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
+                    msgs = one_msg msg;
+                    send msgs
+                end
+            end
+          | None =>
+            msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
+            msgs = one_msg msg;
+            send msgs
+          end
+        end
+    | None =>   
+      msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
+      msgs = one_msg msg;
+      send msgs
+    end
+end
+
+transition verifyGameResults(gameID: String)
+  temp_result <- results[gameID];
+  match temp_result with
+    | Some v =>
+      match v with
+        | Result finalScore winner =>
+            markGameAsVerified gameID winner
+      end
+    | None =>
+      e = {_eventname: "No result flashed  for game"};
+      event e
+    end;
+  msg = {_tag: ""; 
+                _recipient: _sender; 
+                _amount: Uint128 0; 
+                code: success};
+  msgs = one_msg msg;
+  send msgs
+end
+
+transition redeem(gameID: String)
+  temp_gameStatus <- gameStatus[gameID];
+  match temp_gameStatus with
+    | Some v =>
+      game_status = v;
+          gameResult <- results[gameID];
+          match gameResult with
+            | Some v =>
+              match v with
+                | Result temp_finalScore temp_winner =>
+                  isVerified = builtin eq verified game_status;
+                  match isVerified with
+                    | True =>
+                      betID <- playerBets[_sender][gameID];
+                      match betID with
+                        | Some v =>
+                          betStatus[v] := redeemed;
+                          playerBet <- bets[v];
+                          match  playerBet with
+                            | Some v =>
+                              match v with
+                              | Bet gameId playerAddress betSelected amount =>
+                                isWinner = builtin eq betSelected temp_winner;
+                                match isWinner with
+                                  | True =>
+                                    calculateRedeemFund gameID amount
+                                  | False =>
+                                    msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: loose};
+                                    msgs = one_msg msg;
+                                    send msgs
+                                end
+                              end
+                            | None =>
+                              msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
+                              msgs = one_msg msg;
+                              send msgs
+                          end
+                        | None =>
+                          msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
+                          msgs = one_msg msg;
+                          send msgs
+                      end
+                    | False =>
+                      msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
+                      msgs = one_msg msg;
+                      send msgs
+                  end
+              end
+            | None =>
+              msg = {_tag: ""; 
+                        _recipient: _sender; 
+                        _amount: Uint128 0; 
+                        code: unavailable};
+              msgs = one_msg msg;
+              send msgs
+            end
+        | None =>
+          msg = {_tag: ""; 
+                        _recipient: _sender; 
+                        _amount: Uint128 0; 
+                        code: unavailable};
+          msgs = one_msg msg;
+          send msgs
+    end
+end
+
+transition updateOracle(address: ByStr20)
+  isOwner = builtin eq address owner;
+  match isOwner with
+    | True =>
+      oracleAddress := address
+    | False =>
+      msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
+      msgs = one_msg msg;
+      send msgs
+  end
+end

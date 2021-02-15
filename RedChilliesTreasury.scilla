@@ -1,0 +1,111 @@
+scilla_version 0
+
+library RedChilliesTreasury
+
+let one_msg =
+  fun (msg: Message) =>
+  let nil_msg = Nil {Message} in
+  Cons {Message} msg nil_msg
+  
+let success = Uint32 200
+
+let zero = Uint128 0
+  
+type Game = | Game of String
+
+contract RedChilliesTreasury
+(owner: ByStr20)
+
+field games : Map ByStr20 Game
+              = Emp ByStr20 Game
+              
+procedure registerNewGame(game: Game, address: ByStr20)
+    games[address] := game;
+    msg = {_tag: ""; 
+          _recipient: _sender; 
+          _amount: Uint128 0; 
+          code: success};
+    msgs = one_msg msg;
+    send msgs
+end
+
+transition registerGame(gameName: String, address: ByStr20)
+  isOwner = builtin eq owner _sender;
+  match isOwner with
+    | True =>
+      temp_gameName = Game gameName;
+      registerNewGame temp_gameName address;
+      e = {_eventname: "Game Registered";  address: _sender; gameAddress: address};
+      event e
+    | False =>
+      e = {_eventname: "Unauthorized to register new game to treasury";  address: _sender; gameAddress: address};
+      event e
+  end
+end
+
+transition depositFund()
+  emptyFund = builtin eq _amount zero;
+  match emptyFund with
+    | False =>
+      accept;
+      isOwner = builtin eq owner _sender;
+      match isOwner with
+        | True =>
+          e = {_eventname: "Fund deposited by owner"; by: "Owner"; address: _sender; amount: _amount};
+          event e
+        | False =>
+          tempGames <- games;
+          caller = builtin get tempGames _sender;
+          match caller with
+            | Some v =>
+              e = {_eventname: "Fund deposited by game"; by: v; address: _sender; amount: _amount};
+              event e
+            | None =>
+              e = {_eventname: "Fund deposited by unknown"; by: "Unknown"; address: _sender; amount: _amount};
+              event e
+          end
+        end
+    | True =>
+      e = {_eventname: "Insufficient fund"; address: _sender; amount: _amount; msg: "Please put some zil"};
+      event e
+    end
+end
+
+transition withdrawFund(address: ByStr20, amount: Uint128)
+  emptyFund = builtin eq amount zero;
+  match emptyFund with
+    | False =>
+      isOwner = builtin eq owner _sender;
+      match isOwner with
+        | True =>
+          e = {_eventname: "Fund withdrawn by owner"; by: "Owner"; sender: _sender; to: address; amount: amount};
+          event e;
+          msg = {_tag: ""; 
+                _recipient: address; 
+                _amount: amount; 
+                code: success};
+          msgs = one_msg msg;
+          send msgs
+        | False =>
+          tempGames <- games;
+          caller = builtin get tempGames _sender;
+          match caller with
+            | Some v =>
+              e = {_eventname: "Fund withdrawn by game"; by: v; sender: _sender; to: address; amount: amount};
+              event e;
+              msg = {_tag: ""; 
+                _recipient: address; 
+                _amount: amount; 
+                code: success};
+              msgs = one_msg msg;
+              send msgs
+            | None =>
+              e = {_eventname: "Unauthorized to withdraw from treasury"; by: "Unknown"; address: _sender; to: address; amount: _amount};
+              event e
+          end
+        end
+    | True =>
+      e = {_eventname: "No fund to be withdrawn"; sender: _sender; address: address; amount: _amount; msg: "Amount withdrawn should be greater than zero"};
+      event e
+    end
+end

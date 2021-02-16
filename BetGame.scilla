@@ -8,11 +8,43 @@ let one_msg =
   fun (msg: Message) =>
   let nil_msg = Nil {Message} in
   Cons {Message} msg nil_msg
+  
+(* Error events *)
+type Error =
+| CodeUnauthorized
+| CodeGameAlreadyExists
+| CodeInvalidWinner
+| CodeBetAlreadyExists
+| CodeIsNotOpenForBet
+| CodeGameStatusNotAvailable
+| CodeGameNotAvailable
+| CodeHostNotVerified
+| CodeGameNotVerified
+| CodeNotWinner
+| CodeResultNotAvailable
+| CodeBetNotAvailable
+| CodePoolUnavailable 
 
-let success = Uint32 200
-let unauthorized = Uint32 403
-let unavailable = Uint32 404
-let already_exists = Uint32 409
+let make_error =
+  fun (result : Error) =>
+    let result_code = 
+      match result with
+      | CodeUnauthorized              => Int32 -1
+      | CodeGameAlreadyExists         => Int32 -2
+      | CodeInvalidWinner             => Int32 -3
+      | CodeBetAlreadyExists          => Int32 -4
+      | CodeIsNotOpenForBet           => Int32 -5
+      | CodeGameStatusNotAvailable    => Int32 -6
+      | CodeGameNotAvailable          => Int32 -7
+      | CodeHostNotVerified           => Int32 -8
+      | CodeGameNotVerified           => Int32 -9
+      | CodeNotWinner                 => Int32 -10
+      | CodeResultNotAvailable        => Int32 -11
+      | CodeBetNotAvailable           => Int32 -12
+      | CodePoolUnavailable           => Int32 -13
+      end
+    in
+    { _exception : "Error"; code : result_code }
 
 let loose = Uint32 13
 
@@ -49,58 +81,47 @@ treasury: ByStr20,
 oracle: ByStr20)
                           
 field playerBets: Map ByStr20 (Map String String) (* Address => GameID => BetID*)
-                          = Emp ByStr20 (Map String String)
-                    
+                = Emp ByStr20 (Map String String)
 field games: Map String GameData (* GameID => GameData*)
                 = Emp String GameData
-                
 field gameStatus: Map String Uint32 (* GameID => Status*)
                 = Emp String Uint32
-                
 field results: Map String Result (* GameID => Result*)
                 = Emp String Result
-              
 field bets: Map String Bet (* BetID => Bet*)
                 = Emp String Bet
-                
 field betStatus: Map String Uint32 (* BetID => Status*)
                 = Emp String Uint32
-                
 field totalWinPoolBet: Map String Uint32 (* GameID => Count*)
                 = Emp String Uint32
-                
 field totalLoosePoolBet: Map String Uint32 (* GameID => Count*)
                 = Emp String Uint32
-                
 field totalDrawPoolBet: Map String Uint32 (* GameID => Count*)
                 = Emp String Uint32
-                
 field totalWinPoolBetAmount: Map String Uint128 (* GameID => Amount*)
                 = Emp String Uint128
-                
 field totalLoosePoolBetAmount: Map String Uint128 (* GameID => Amount*)
                 = Emp String Uint128
-                
 field totalDrawPoolBetAmount: Map String Uint128 (* GameID => Amount*)
                 = Emp String Uint128
-                
 field totalDistributePool: Map String Uint128 (* GameID => Amount*)
                 = Emp String Uint128
-                
 field totalPool: Map String Uint128 (* GameID => Amount*)
                 = Emp String Uint128
                 
 field oracleAddress : ByStr20 = oracle
 
+procedure ThrowError(err : Error)
+  e = make_error err;
+  throw e
+end
+
 procedure createNewGame(gameID: String, gameData: GameData)
     games[gameID] := gameData;
     gameStatus[gameID] := open_for_bet;
-    msg = {_tag: ""; 
-          _recipient: _sender; 
-          _amount: Uint128 0; 
-          code: success};
-    msgs = one_msg msg;
-    send msgs
+    
+    e = {_eventname : "GameCreated"; host : _sender; gameID: gameID};
+    event e
 end
 
 procedure initPool(gameID: String)
@@ -112,25 +133,14 @@ procedure initPool(gameID: String)
   totalWinPoolBetAmount[gameID] := amount_zero
 end
 
-transition createGame(gameID: String, homeTeam: String, awayTeam: String, startingOn: String)
-  game_check <- games[gameID];
-  match game_check with
-    | Some v =>
-      msg = {_tag:""; _recipient: _sender; _amount: amount_zero; code: already_exists};
-      msgs = one_msg msg;
-      send msgs
-    | None =>
-      new_game = GameData homeTeam awayTeam startingOn _sender;
-      createNewGame gameID new_game;
-      initPool gameID
-    end
-end
-
 procedure createBet(betID: String, gameID: String, bet: Bet)
     accept;
     bets[betID] := bet;
     playerBets[_sender][gameID] := betID;
     betStatus[betID] := not_redeemed;
+    
+    e = {_eventname : "BetPlaced"; sender : _sender; gameID: gameID; amount: _amount};
+    event e;
     
     msg = {_tag: "depositFund"; 
           _recipient: treasury; 
@@ -138,13 +148,13 @@ procedure createBet(betID: String, gameID: String, bet: Bet)
     msgs = one_msg msg;
     send msgs
 end
-  
-  procedure placeBet(gameID: String, betID: String, betSelected: Uint32)
-    new_bet = Bet gameID _sender betSelected _amount;
-    createBet betID gameID new_bet
-  end
-  
-  procedure updatePool(gameID: String, betSelected: Uint32)
+
+procedure placeBet(gameID: String, betID: String, betSelected: Uint32)
+  new_bet = Bet gameID _sender betSelected _amount;
+  createBet betID gameID new_bet
+end
+
+procedure updatePool(gameID: String, betSelected: Uint32)
     is_Win = builtin eq betSelected winPool;
     match is_Win with
       | True =>
@@ -211,96 +221,19 @@ end
                     totalDrawPoolBetAmount[gameID] := addDrawPoolBetAmount
                 end
               | False =>
-                msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
-                msgs = one_msg msg;
-                send msgs
+                err = CodeInvalidWinner;
+                ThrowError err
             end
         end
     end
   end
   
-  transition bet(gameID: String, betID: String, betSelected: Uint32)
-    bet_check <- bets[gameID];
-    match bet_check with
-      | Some v =>
-        msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: already_exists};
-        msgs = one_msg msg;
-        send msgs
-      | None =>
-        tempGamesForResponse <- gameStatus[gameID];
-        match tempGamesForResponse with
-        | Some v =>
-          is_open_for_bet = builtin eq open_for_bet v;
-          match is_open_for_bet with
-            | True =>
-              updatePool gameID betSelected;
-              placeBet gameID betID betSelected
-            | False =>
-              msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
-              msgs = one_msg msg;
-              send msgs
-          end
-        | None =>
-          msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
-          msgs = one_msg msg;
-          send msgs
-        end
-    end
-  end
-
-transition gameStarted(gameID: String)
-  temp_oracleAddress <- oracleAddress;
-  is_oracle = builtin eq temp_oracleAddress _sender;
-  match is_oracle with
-    | True =>
-      gameStatus[gameID] := started;
-      msg = {_tag: ""; 
-                    _recipient: _sender; 
-                    _amount: Uint128 0; 
-                    code: success};
-      msgs = one_msg msg;
-      send msgs
-    | False =>
-      msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
-      msgs = one_msg msg;
-      send msgs
-  end
-end
-
 procedure flashResult(gameID: String, finalScore: String, winner: Uint32)
   new_result = Result finalScore winner;
-  results[gameID] := new_result
-end
-
-transition flashGameResults(gameID: String, finalScore: String, winner: Uint32)
-  tempGame <- games[gameID];
-    match tempGame with
-    | Some v =>
-      match v with
-        | GameData homeTeam awayTeam startingOn hostedBy =>
-          temp_oracleAddress <- oracleAddress;
-          is_oracle = builtin eq temp_oracleAddress _sender;
-          match is_oracle with
-            | True =>
-              gameStatus[gameID] := completed;
-              flashResult gameID finalScore winner;
-              msg = {_tag: ""; 
-                            _recipient: _sender; 
-                            _amount: Uint128 0; 
-                            code: success};
-              msgs = one_msg msg;
-              send msgs
-            | False =>
-              msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
-              msgs = one_msg msg;
-              send msgs
-          end
-      end
-    | None =>
-      msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
-      msgs = one_msg msg;
-      send msgs
-    end
+  results[gameID] := new_result;
+  
+  e = {_eventname : "ResultFlashed"; gameID: gameID; finalScore: finalScore; winner: winner};
+  event e
 end
 
 procedure setTotalPool(gameID: String, totalAmount: Uint128)
@@ -313,57 +246,56 @@ procedure setTotalPool(gameID: String, totalAmount: Uint128)
 end
 
 procedure buildPool(gameID: String, winner: Uint32)
-    temp_totalWinPoolBetAmount <- totalWinPoolBetAmount[gameID];
-    temp_totalLoosePoolBetAmount <- totalLoosePoolBetAmount[gameID];
-    temp_totalDrawPoolBetAmount <- totalDrawPoolBetAmount[gameID];
-    
-    match temp_totalWinPoolBetAmount with
-      | Some v1 =>
-        match temp_totalLoosePoolBetAmount with
-        | Some v2 =>
-          match temp_totalDrawPoolBetAmount with
-          | Some v3 =>
-            is_Win = builtin eq winner winPool;
-            match is_Win with
-              | True =>
-                temp_totalWinPool = builtin add v2 v3;
-                setTotalPool gameID temp_totalWinPool;
-                totalPool[gameID] := v1
-              | False =>
-                is_Loose = builtin eq winner loosePool;
-                match is_Loose with
-                  | True =>
-                    temp_totalLoosePool = builtin add v1 v3;
-                    setTotalPool gameID temp_totalLoosePool;
-                    totalPool[gameID] := v2
-                  | False =>
-                    is_Draw = builtin eq winner drawPool;
-                    match is_Draw with
-                      | True =>
-                        temp_totalDrawPool = builtin add v1 v2;
-                        setTotalPool gameID temp_totalDrawPool;
-                        totalPool[gameID] := v3
-                      | False =>
-                        msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
-                        msgs = one_msg msg;
-                        send msgs
-                    end
-                end
+  temp_totalWinPoolBetAmount <- totalWinPoolBetAmount[gameID];
+  temp_totalLoosePoolBetAmount <- totalLoosePoolBetAmount[gameID];
+  temp_totalDrawPoolBetAmount <- totalDrawPoolBetAmount[gameID];
+  
+  match temp_totalWinPoolBetAmount with
+    | Some v1 =>
+      match temp_totalLoosePoolBetAmount with
+      | Some v2 =>
+        match temp_totalDrawPoolBetAmount with
+        | Some v3 =>
+          is_Win = builtin eq winner winPool;
+          match is_Win with
+            | True =>
+              temp_totalWinPool = builtin add v2 v3;
+              setTotalPool gameID temp_totalWinPool;
+              totalPool[gameID] := v1
+            | False =>
+              is_Loose = builtin eq winner loosePool;
+              match is_Loose with
+                | True =>
+                  temp_totalLoosePool = builtin add v1 v3;
+                  setTotalPool gameID temp_totalLoosePool;
+                  totalPool[gameID] := v2
+                | False =>
+                  is_Draw = builtin eq winner drawPool;
+                  match is_Draw with
+                    | True =>
+                      temp_totalDrawPool = builtin add v1 v2;
+                      setTotalPool gameID temp_totalDrawPool;
+                      totalPool[gameID] := v3
+                    | False =>
+                      err = CodeInvalidWinner;
+                      ThrowError err
+                  end
               end
-          | None =>
-            e = {_eventname: "No draw pool"};
-            event e
-          end
+            end
         | None =>
-          e = {_eventname: "No loose pool"};
-          event e
+          err = CodePoolUnavailable;
+          ThrowError err
         end
       | None =>
-        e = {_eventname: "No win pool"};
-        event e
-    end
+        err = CodePoolUnavailable;
+        ThrowError err
+      end
+    | None =>
+      err = CodePoolUnavailable;
+      ThrowError err
   end
-  
+end
+
 procedure callForTreasury(redeem: Uint128)
   msg = {_tag: "withdrawFund"; 
           _recipient: treasury; 
@@ -387,12 +319,12 @@ procedure calculateRedeemFund(gameId: String, amount: Uint128)
           total_redeem = builtin add temp_fraction amount;
           callForTreasury total_redeem
         | None =>
-          e = {_eventname: "No pool"};
-          event e
+          err = CodePoolUnavailable;
+          ThrowError err
       end
     | None =>
-      e = {_eventname: "No pool"};
-      event e
+      err = CodePoolUnavailable;
+      ThrowError err
   end
 end
 
@@ -418,20 +350,17 @@ procedure redeemHost(gameID: String)
                 msgs = one_msg msg;
                 send msgs
               | None =>
-                msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
-                msgs = one_msg msg;
-                send msgs
+                err = CodePoolUnavailable;
+                ThrowError err
             end
           | False =>
-            msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
-            msgs = one_msg msg;
-            send msgs
+            err = CodeUnauthorized;
+            ThrowError err
         end
     end
   | None =>
-    msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
-    msgs = one_msg msg;
-    send msgs
+    err = CodeGameNotAvailable;
+    ThrowError err
   end
 end
 
@@ -452,14 +381,12 @@ procedure markGameAsVerified(gameID: String, winner: Uint32)
                   buildPool gameID winner;
                   redeemHost gameID
                 | False =>
-                  msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
-                  msgs = one_msg msg;
-                  send msgs
+                  err = CodeHostNotVerified;
+                  ThrowError err
                 end
             | None =>
-              msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
-              msgs = one_msg msg;
-              send msgs
+              err = CodeUnauthorized;
+              ThrowError err
             end
         | False =>
           tempGame <- games[gameID];
@@ -469,110 +396,193 @@ procedure markGameAsVerified(gameID: String, winner: Uint32)
               | GameData homeTeam awayTeam startingOn hostedBy =>
                 is_host = builtin eq hostedBy _sender;
                 match is_host with
-                    | True =>
+                  | True =>
                     gameStatus[gameID] := partial_verified
-                    | False =>
-                    msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
-                    msgs = one_msg msg;
-                    send msgs
+                  | False =>
+                    err = CodeUnauthorized;
+                    ThrowError err
                 end
             end
           | None =>
-            msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
-            msgs = one_msg msg;
-            send msgs
+            err = CodeGameNotAvailable;
+            ThrowError err
           end
         end
     | None =>   
-      msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
-      msgs = one_msg msg;
-      send msgs
+      err = CodeResultNotAvailable;
+      ThrowError err
+    end
+end
+
+transition createGame(gameID: String, homeTeam: String, awayTeam: String, startingOn: String)
+  game_check <- games[gameID];
+  match game_check with
+    | Some v =>
+      err = CodeGameAlreadyExists;
+      ThrowError err
+    | None =>
+      new_game = GameData homeTeam awayTeam startingOn _sender;
+      createNewGame gameID new_game;
+      initPool gameID
+    end
+end
+
+transition bet(gameID: String, betID: String, betSelected: Uint32)
+  gameForBet <- games[gameID];
+  match gameForBet with
+    | Some v =>
+      bet_check <- bets[gameID];
+      match bet_check with
+        | Some v =>
+          err = CodeBetAlreadyExists;
+          ThrowError err
+        | None =>
+          tempGamesForResponse <- gameStatus[gameID];
+          match tempGamesForResponse with
+          | Some v =>
+            is_open_for_bet = builtin eq open_for_bet v;
+            match is_open_for_bet with
+              | True =>
+                updatePool gameID betSelected;
+                placeBet gameID betID betSelected
+              | False =>
+                err = CodeIsNotOpenForBet;
+                ThrowError err
+            end
+          | None =>
+            err = CodeGameStatusNotAvailable;
+            ThrowError err
+          end
+      end
+    | None =>
+      err = CodeGameNotAvailable;
+      ThrowError err
+    end
+end
+
+transition gameStarted(gameID: String)
+  gameToBeStarted <- games[gameID];
+  match gameToBeStarted with
+    | Some v =>
+      temp_oracleAddress <- oracleAddress;
+      is_oracle = builtin eq temp_oracleAddress _sender;
+      match is_oracle with
+        | True =>
+          gameStatus[gameID] := started;
+          e = {_eventname : "GameStarted"; gameID: gameID};
+          event e
+        | False =>
+          err = CodeUnauthorized;
+          ThrowError err
+      end
+    | None =>
+      err = CodeGameNotAvailable;
+      ThrowError err
+    end
+end
+
+transition flashGameResults(gameID: String, finalScore: String, winner: Uint32)
+  tempGame <- games[gameID];
+    match tempGame with
+    | Some v =>
+      match v with
+        | GameData homeTeam awayTeam startingOn hostedBy =>
+          temp_oracleAddress <- oracleAddress;
+          is_oracle = builtin eq temp_oracleAddress _sender;
+          match is_oracle with
+            | True =>
+              gameStatus[gameID] := completed;
+              flashResult gameID finalScore winner
+            | False =>
+              err = CodeUnauthorized;
+              ThrowError err
+          end
+      end
+    | None =>
+      err = CodeGameNotAvailable;
+      ThrowError err
     end
 end
 
 transition verifyGameResults(gameID: String)
-  temp_result <- results[gameID];
-  match temp_result with
+  gameToVerify <- games[gameID];
+  match gameToVerify with
     | Some v =>
-      match v with
-        | Result finalScore winner =>
-            markGameAsVerified gameID winner
-      end
+      temp_result <- results[gameID];
+      match temp_result with
+        | Some v =>
+          match v with
+            | Result finalScore winner =>
+                markGameAsVerified gameID winner
+          end
+        | None =>
+          err = CodeResultNotAvailable;
+          ThrowError err
+        end
     | None =>
-      e = {_eventname: "No result flashed  for game"};
-      event e
-    end;
-  msg = {_tag: ""; 
-                _recipient: _sender; 
-                _amount: Uint128 0; 
-                code: success};
-  msgs = one_msg msg;
-  send msgs
+      err = CodeGameNotAvailable;
+      ThrowError err
+    end
 end
 
 transition redeem(gameID: String)
-  temp_gameStatus <- gameStatus[gameID];
-  match temp_gameStatus with
+gameToVerify <- games[gameID];
+  match gameToVerify with
     | Some v =>
-      game_status = v;
-          gameResult <- results[gameID];
-          match gameResult with
-            | Some v =>
-              match v with
-                | Result temp_finalScore temp_winner =>
-                  isVerified = builtin eq verified game_status;
-                  match isVerified with
-                    | True =>
-                      betID <- playerBets[_sender][gameID];
-                      match betID with
-                        | Some v =>
-                          betStatus[v] := redeemed;
-                          playerBet <- bets[v];
-                          match  playerBet with
+      temp_gameStatus <- gameStatus[gameID];
+      match temp_gameStatus with
+        | Some v =>
+          game_status = v;
+              gameResult <- results[gameID];
+              match gameResult with
+                | Some v =>
+                  match v with
+                    | Result temp_finalScore temp_winner =>
+                      isVerified = builtin eq verified game_status;
+                      match isVerified with
+                        | True =>
+                          betID <- playerBets[_sender][gameID];
+                          match betID with
                             | Some v =>
-                              match v with
-                              | Bet gameId playerAddress betSelected amount =>
-                                isWinner = builtin eq betSelected temp_winner;
-                                match isWinner with
-                                  | True =>
-                                    calculateRedeemFund gameID amount
-                                  | False =>
-                                    msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: loose};
-                                    msgs = one_msg msg;
-                                    send msgs
-                                end
+                              betStatus[v] := redeemed;
+                              playerBet <- bets[v];
+                              match playerBet with
+                                | Some v =>
+                                  match v with
+                                  | Bet gameId playerAddress betSelected amount =>
+                                    isWinner = builtin eq betSelected temp_winner;
+                                    match isWinner with
+                                      | True =>
+                                        calculateRedeemFund gameID amount
+                                      | False =>
+                                        err = CodeNotWinner;
+                                        ThrowError err
+                                    end
+                                  end
+                                | None =>
+                                  err = CodeBetNotAvailable;
+                                  ThrowError err
                               end
                             | None =>
-                              msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
-                              msgs = one_msg msg;
-                              send msgs
+                              err = CodeBetNotAvailable;
+                              ThrowError err
                           end
-                        | None =>
-                          msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unavailable};
-                          msgs = one_msg msg;
-                          send msgs
+                        | False =>
+                          err = CodeGameNotVerified;
+                          ThrowError err
                       end
-                    | False =>
-                      msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
-                      msgs = one_msg msg;
-                      send msgs
                   end
-              end
+                | None =>
+                  err = CodeResultNotAvailable;
+                  ThrowError err
+                end
             | None =>
-              msg = {_tag: ""; 
-                        _recipient: _sender; 
-                        _amount: Uint128 0; 
-                        code: unavailable};
-              msgs = one_msg msg;
-              send msgs
-            end
-        | None =>
-          msg = {_tag: ""; 
-                        _recipient: _sender; 
-                        _amount: Uint128 0; 
-                        code: unavailable};
-          msgs = one_msg msg;
-          send msgs
+              err = CodeGameStatusNotAvailable;
+              ThrowError err
+        end
+    | None =>
+      err = CodeGameNotAvailable;
+      ThrowError err
     end
 end
 
@@ -580,10 +590,11 @@ transition updateOracle(address: ByStr20)
   isOwner = builtin eq address owner;
   match isOwner with
     | True =>
-      oracleAddress := address
+      oracleAddress := address;
+      e = {_eventname : "OracleUpdated"; sender : _sender};
+      event e
     | False =>
-      msg = {_tag:""; _recipient: _sender; _amount: Uint128 0; code: unauthorized};
-      msgs = one_msg msg;
-      send msgs
+      err = CodeUnauthorized;
+      ThrowError err
   end
 end

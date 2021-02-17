@@ -7,39 +7,60 @@ let one_msg =
   let nil_msg = Nil {Message} in
   Cons {Message} msg nil_msg
   
-let success = Uint32 200
+(* Error events *)
+type Error =
+| CodeUnauthorized
+| CodeNoZilSent
+| CodeNoZilRequested
+
+let make_error =
+  fun (result : Error) =>
+    let result_code = 
+      match result with
+      | CodeUnauthorized              => Int32 -1
+      | CodeNoZilSent                 => Int32 -2
+      | CodeNoZilRequested            => Int32 -3
+      end
+    in
+    { _exception : "Error"; code : result_code }
 
 let zero = Uint128 0
-  
-type Game = | Game of String
+let success = Uint128 200
 
 contract RedChilliesTreasury
 (owner: ByStr20)
 
-field games : Map ByStr20 Game
-              = Emp ByStr20 Game
+field games : Map ByStr20 String
+              = Emp ByStr20 String
               
-procedure registerNewGame(game: Game, address: ByStr20)
-    games[address] := game;
-    msg = {_tag: ""; 
-          _recipient: _sender; 
-          _amount: Uint128 0; 
-          code: success};
-    msgs = one_msg msg;
-    send msgs
+procedure ThrowError(err : Error)
+  e = make_error err;
+  throw e
+end
+              
+procedure registerNewGame(game: String, address: ByStr20)
+    games[address] := game
+end
+
+procedure withDraw(address: ByStr20, amount: Uint128)
+  msg = {_tag: ""; 
+        _recipient: address; 
+        _amount: amount; 
+        code: success};
+  msgs = one_msg msg;
+  send msgs
 end
 
 transition registerGame(gameName: String, address: ByStr20)
   isOwner = builtin eq owner _sender;
   match isOwner with
     | True =>
-      temp_gameName = Game gameName;
-      registerNewGame temp_gameName address;
-      e = {_eventname: "Game Registered";  address: _sender; gameAddress: address};
+      registerNewGame gameName address;
+      e = {_eventname: "GameRegistered";  address: _sender; gameAddress: address};
       event e
     | False =>
-      e = {_eventname: "Unauthorized to register new game to treasury";  address: _sender; gameAddress: address};
-      event e
+      err = CodeUnauthorized;
+      ThrowError err
   end
 end
 
@@ -51,23 +72,22 @@ transition depositFund()
       isOwner = builtin eq owner _sender;
       match isOwner with
         | True =>
-          e = {_eventname: "Fund deposited by owner"; by: "Owner"; address: _sender; amount: _amount};
+          e = {_eventname: "FundDeposited"; by: "Owner"; address: _sender; amount: _amount};
           event e
         | False =>
-          tempGames <- games;
-          caller = builtin get tempGames _sender;
+          caller <- games[_sender];
           match caller with
             | Some v =>
-              e = {_eventname: "Fund deposited by game"; by: v; address: _sender; amount: _amount};
+              e = {_eventname: "FundDeposited"; by: v; address: _sender; amount: _amount};
               event e
             | None =>
-              e = {_eventname: "Fund deposited by unknown"; by: "Unknown"; address: _sender; amount: _amount};
+              e = {_eventname: "FundDeposited"; by: "Anonymous"; address: _sender; amount: _amount};
               event e
           end
         end
     | True =>
-      e = {_eventname: "Insufficient fund"; address: _sender; amount: _amount; msg: "Please put some zil"};
-      event e
+      err = CodeNoZilSent;
+      ThrowError err
     end
 end
 
@@ -78,34 +98,23 @@ transition withdrawFund(address: ByStr20, amount: Uint128)
       isOwner = builtin eq owner _sender;
       match isOwner with
         | True =>
-          e = {_eventname: "Fund withdrawn by owner"; by: "Owner"; sender: _sender; to: address; amount: amount};
-          event e;
-          msg = {_tag: ""; 
-                _recipient: address; 
-                _amount: amount; 
-                code: success};
-          msgs = one_msg msg;
-          send msgs
+          withDraw address amount;
+          e = {_eventname: "FundWithDrawn"; by: "Owner"; sender: _sender; to: address; amount: amount};
+          event e
         | False =>
-          tempGames <- games;
-          caller = builtin get tempGames _sender;
+          caller <- games[_sender];
           match caller with
             | Some v =>
-              e = {_eventname: "Fund withdrawn by game"; by: v; sender: _sender; to: address; amount: amount};
-              event e;
-              msg = {_tag: ""; 
-                _recipient: address; 
-                _amount: amount; 
-                code: success};
-              msgs = one_msg msg;
-              send msgs
-            | None =>
-              e = {_eventname: "Unauthorized to withdraw from treasury"; by: "Unknown"; address: _sender; to: address; amount: _amount};
+              withDraw address amount;
+              e = {_eventname: "FundWithDrawn"; by: v; sender: _sender; to: address; amount: amount};
               event e
+            | None =>
+              err = CodeUnauthorized;
+              ThrowError err
           end
         end
     | True =>
-      e = {_eventname: "No fund to be withdrawn"; sender: _sender; address: address; amount: _amount; msg: "Amount withdrawn should be greater than zero"};
-      event e
+      err = CodeNoZilRequested;
+      ThrowError err
     end
 end

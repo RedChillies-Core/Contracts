@@ -7,7 +7,7 @@ A Gaming platform in Zilliqa Blockchain
 - Treasury Smart Contract
 
 ## Instruction
-- Open [Neo Savant IDE](ide.zilliqa.com) in your web browser.
+- Open [Neo Savant IDE](https://ide.zilliqa.com) in your web browser.
 - Create a new file and copy the contract you want to test. Save and Deploy.
 
 

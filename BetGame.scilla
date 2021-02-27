@@ -24,6 +24,7 @@ type Error =
 | CodeResultNotAvailable
 | CodeBetNotAvailable
 | CodePoolUnavailable 
+| BetAmountInsufficient
 
 let make_error =
   fun (result : Error) =>
@@ -42,6 +43,7 @@ let make_error =
       | CodeResultNotAvailable        => Int32 -11
       | CodeBetNotAvailable           => Int32 -12
       | CodePoolUnavailable           => Int32 -13
+      | BetAmountInsufficient         => Int32 -14
       end
     in
     { _exception : "Error"; code : result_code }
@@ -68,6 +70,8 @@ let winPool = Uint32 0
 let loosePool = Uint32 1
 let drawPool = Uint32 2
 
+let redCCharge = Uint128 2
+
 type GameData = | GameData of String String String ByStr20
 (*type GameData = | GameData of HomeTeam AwayTeam StartingOn HostedBy*)
 type Bet = | Bet of String ByStr20 Uint32 Uint128
@@ -78,7 +82,8 @@ type Result = | Result of String Uint32
 contract BetGame
 (owner: ByStr20,
 treasury: ByStr20,
-oracle: ByStr20)
+oracle: ByStr20,
+redC: ByStr20)
                           
 field playerBets: Map ByStr20 (Map String String) (* Address => GameID => BetID*)
                 = Emp ByStr20 (Map String String)
@@ -110,10 +115,23 @@ field totalPool: Map String Uint128 (* GameID => Amount*)
                 = Emp String Uint128
                 
 field oracleAddress : ByStr20 = oracle
+field minimumBet: Uint128 = Uint128 20
 
 procedure ThrowError(err : Error)
   e = make_error err;
   throw e
+end
+
+procedure depositRedC()
+  msg_to_token =  {
+    _tag : "TransferFrom";
+    _recipient: redC;
+    _amount: amount_zero;
+    to: treasury;
+    amount: redCCharge
+  };
+  msgs = one_msg msg_to_token;
+  send msgs
 end
 
 procedure createNewGame(gameID: String, gameData: GameData)
@@ -164,8 +182,7 @@ procedure updatePool(gameID: String, betSelected: Uint32)
             addWinPoolBet = builtin add v incr;
             totalWinPoolBet[gameID] := addWinPoolBet
           | None =>
-            addWinPoolBet = builtin add zero incr;
-            totalWinPoolBet[gameID] := addWinPoolBet
+            totalWinPoolBet[gameID] := incr
         end;
         recentWinPoolBetsAmount <- totalWinPoolBetAmount[gameID];
         match recentWinPoolBetsAmount with
@@ -173,8 +190,7 @@ procedure updatePool(gameID: String, betSelected: Uint32)
             addWinPoolBetAmount = builtin add v _amount;
             totalWinPoolBetAmount[gameID] := addWinPoolBetAmount
           | None =>
-            addWinPoolBetAmount = builtin add amount_zero _amount;
-            totalWinPoolBetAmount[gameID] := addWinPoolBetAmount
+            totalWinPoolBetAmount[gameID] := _amount
         end
       | False =>
         is_Loose = builtin eq betSelected loosePool;
@@ -186,8 +202,7 @@ procedure updatePool(gameID: String, betSelected: Uint32)
                 addLoosePoolBet = builtin add v incr;
                 totalLoosePoolBet[gameID] := addLoosePoolBet
               | None =>
-                addLoosePoolBet = builtin add zero incr;
-                totalLoosePoolBet[gameID] := addLoosePoolBet
+                totalLoosePoolBet[gameID] := incr
             end;
             recentLoosePoolBetsAmount <- totalLoosePoolBetAmount[gameID];
             match recentLoosePoolBetsAmount with
@@ -195,8 +210,7 @@ procedure updatePool(gameID: String, betSelected: Uint32)
                 addLoosePoolBetAmount = builtin add v _amount;
                 totalLoosePoolBetAmount[gameID] := addLoosePoolBetAmount
               | None =>
-                addLoosePoolBetAmount = builtin add amount_zero _amount;
-                totalLoosePoolBetAmount[gameID] := addLoosePoolBetAmount
+                totalLoosePoolBetAmount[gameID] := _amount
             end
           | False =>
             is_Draw = builtin eq betSelected drawPool;
@@ -208,8 +222,7 @@ procedure updatePool(gameID: String, betSelected: Uint32)
                     addDrawPoolBet = builtin add v incr;
                     totalDrawPoolBet[gameID] := addDrawPoolBet
                   | None =>
-                    addDrawPoolBet = builtin add zero incr;
-                    totalDrawPoolBet[gameID] := addDrawPoolBet
+                    totalDrawPoolBet[gameID] := incr
                 end;
                 recentDrawPoolBetsAmount <- totalDrawPoolBetAmount[gameID];
                 match recentDrawPoolBetsAmount with
@@ -217,8 +230,7 @@ procedure updatePool(gameID: String, betSelected: Uint32)
                     addDrawPoolBetAmount = builtin add v _amount;
                     totalDrawPoolBetAmount[gameID] := addDrawPoolBetAmount
                   | None =>
-                    addDrawPoolBetAmount = builtin add amount_zero _amount;
-                    totalDrawPoolBetAmount[gameID] := addDrawPoolBetAmount
+                    totalDrawPoolBetAmount[gameID] := _amount
                 end
               | False =>
                 err = CodeInvalidWinner;
@@ -422,41 +434,50 @@ transition createGame(gameID: String, homeTeam: String, awayTeam: String, starti
       ThrowError err
     | None =>
       new_game = GameData homeTeam awayTeam startingOn _sender;
+      depositRedC;
       createNewGame gameID new_game;
       initPool gameID
     end
 end
 
 transition bet(gameID: String, betID: String, betSelected: Uint32)
-  gameForBet <- games[gameID];
-  match gameForBet with
-    | Some v =>
-      bet_check <- bets[gameID];
-      match bet_check with
-        | Some v =>
-          err = CodeBetAlreadyExists;
-          ThrowError err
-        | None =>
-          tempGamesForResponse <- gameStatus[gameID];
-          match tempGamesForResponse with
-          | Some v =>
-            is_open_for_bet = builtin eq open_for_bet v;
-            match is_open_for_bet with
-              | True =>
-                updatePool gameID betSelected;
-                placeBet gameID betID betSelected
-              | False =>
-                err = CodeIsNotOpenForBet;
-                ThrowError err
-            end
-          | None =>
-            err = CodeGameStatusNotAvailable;
-            ThrowError err
-          end
-      end
-    | None =>
-      err = CodeGameNotAvailable;
+  temp_minBet <- minimumBet;
+  isBetLow = builtin lt _amount temp_minBet;
+  match isBetLow with
+    | True =>
+      err = BetAmountInsufficient;
       ThrowError err
+    | False =>
+      gameForBet <- games[gameID];
+      match gameForBet with
+        | Some v =>
+          bet_check <- bets[gameID];
+          match bet_check with
+            | Some v =>
+              err = CodeBetAlreadyExists;
+              ThrowError err
+            | None =>
+              tempGamesForResponse <- gameStatus[gameID];
+              match tempGamesForResponse with
+              | Some v =>
+                is_open_for_bet = builtin eq open_for_bet v;
+                match is_open_for_bet with
+                  | True =>
+                    updatePool gameID betSelected;
+                    placeBet gameID betID betSelected
+                  | False =>
+                    err = CodeIsNotOpenForBet;
+                    ThrowError err
+                end
+              | None =>
+                err = CodeGameStatusNotAvailable;
+                ThrowError err
+              end
+          end
+        | None =>
+          err = CodeGameNotAvailable;
+          ThrowError err
+        end
     end
 end
 
@@ -587,11 +608,24 @@ gameToVerify <- games[gameID];
 end
 
 transition updateOracle(address: ByStr20)
-  isOwner = builtin eq address owner;
+  isOwner = builtin eq _sender owner;
   match isOwner with
     | True =>
       oracleAddress := address;
       e = {_eventname : "OracleUpdated"; sender : _sender};
+      event e
+    | False =>
+      err = CodeUnauthorized;
+      ThrowError err
+  end
+end
+
+transition minimumBet(amount: Uint128)
+  isOwner = builtin eq _sender owner;
+  match isOwner with
+    | True =>
+      minimumBet := amount;
+      e = {_eventname : "MinimumBetUpdated"; sender : _sender};
       event e
     | False =>
       err = CodeUnauthorized;

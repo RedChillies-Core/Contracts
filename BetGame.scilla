@@ -1,6 +1,6 @@
 scilla_version 0
 
-import IntUtils
+import BoolUtils IntUtils
 
 library BetGame
 
@@ -122,11 +122,13 @@ procedure ThrowError(err : Error)
   throw e
 end
 
+(*User needs to call IncreaseAllowance transition in token contract first*)
 procedure depositRedC()
   msg_to_token =  {
     _tag : "TransferFrom";
     _recipient: redC;
     _amount: amount_zero;
+    from: _sender;
     to: treasury;
     amount: redCCharge
   };
@@ -632,3 +634,30 @@ transition minimumBet(amount: Uint128)
       ThrowError err
   end
 end
+
+
+transition RecipientAcceptTransferFrom(
+  initiator : ByStr20,
+  sender : ByStr20,
+  recipient : ByStr20,
+  amount : Uint128
+)
+end
+
+transition TransferFromSuccessCallBack(
+  initiator : ByStr20,
+  sender : ByStr20,
+  recipient : ByStr20,
+  amount : Uint128
+)
+end
+
+transition TransferSuccessCallBack(
+  sender : ByStr20,
+  recipient : ByStr20,
+  amount : Uint128
+)
+end
+
+
+

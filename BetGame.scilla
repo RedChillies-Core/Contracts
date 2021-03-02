@@ -70,7 +70,8 @@ let winPool = Uint32 0
 let loosePool = Uint32 1
 let drawPool = Uint32 2
 
-let redCCharge = Uint128 2
+let redCChargeForFirst = Uint128 2
+let redCChargeAfterFirst = Uint128 10
 
 type GameData = | GameData of String String String ByStr20
 (*type GameData = | GameData of HomeTeam AwayTeam StartingOn HostedBy*)
@@ -113,6 +114,8 @@ field totalDistributePool: Map String Uint128 (* GameID => Amount*)
                 = Emp String Uint128
 field totalPool: Map String Uint128 (* GameID => Amount*)
                 = Emp String Uint128
+field userHostedGamesCount: Map ByStr20 Uint32 (* Address => TotalGamesHosted*)
+                = Emp ByStr20 Uint32
                 
 field oracleAddress : ByStr20 = oracle
 field minimumBet: Uint128 = Uint128 20
@@ -123,14 +126,14 @@ procedure ThrowError(err : Error)
 end
 
 (*User needs to call IncreaseAllowance transition in token contract first*)
-procedure depositRedC()
+procedure depositRedC(redCAmount: Uint128)
   msg_to_token =  {
     _tag : "TransferFrom";
     _recipient: redC;
     _amount: amount_zero;
     from: _sender;
     to: treasury;
-    amount: redCCharge
+    amount: redCAmount
   };
   msgs = one_msg msg_to_token;
   send msgs
@@ -435,8 +438,23 @@ transition createGame(gameID: String, homeTeam: String, awayTeam: String, starti
       err = CodeGameAlreadyExists;
       ThrowError err
     | None =>
+      temp_userHostedGamesCount <- userHostedGamesCount[_sender];
+      match temp_userHostedGamesCount with
+        | Some v =>
+          isFirstGame = builtin eq v zero;
+          match  isFirstGame  with
+            | True =>
+              depositRedC redCChargeForFirst
+            | False =>
+              depositRedC redCChargeAfterFirst
+          end;
+          adduserHostedGamesCount = builtin add v incr;
+          userHostedGamesCount[_sender] := adduserHostedGamesCount
+        | None =>
+          depositRedC redCChargeForFirst;
+          userHostedGamesCount[_sender] := incr
+      end;
       new_game = GameData homeTeam awayTeam startingOn _sender;
-      depositRedC;
       createNewGame gameID new_game;
       initPool gameID
     end
@@ -515,7 +533,15 @@ transition flashGameResults(gameID: String, finalScore: String, winner: Uint32)
           match is_oracle with
             | True =>
               gameStatus[gameID] := completed;
-              flashResult gameID finalScore winner
+              flashResult gameID finalScore winner;
+              temp_userHostedGamesCount <- userHostedGamesCount[hostedBy];
+              match temp_userHostedGamesCount with
+                | Some v =>
+                  deduct_userHostedGamesCount = builtin sub v incr;
+                  userHostedGamesCount[hostedBy] :=  deduct_userHostedGamesCount
+                | None =>
+                  userHostedGamesCount[hostedBy] :=  zero
+              end
             | False =>
               err = CodeUnauthorized;
               ThrowError err
@@ -658,6 +684,3 @@ transition TransferSuccessCallBack(
   amount : Uint128
 )
 end
-
-
-

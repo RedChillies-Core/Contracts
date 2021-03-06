@@ -25,6 +25,7 @@ let make_error =
     { _exception : "Error"; code : result_code }
 
 let zero = Uint128 0
+let amount_zero = Uint128 0
 let success = Uint128 200
 
 contract RedChilliesTreasury
@@ -48,6 +49,19 @@ procedure withDraw(address: ByStr20, amount: Uint128)
         _amount: amount; 
         code: success};
   msgs = one_msg msg;
+  send msgs
+end
+
+procedure withdrawToken(address: ByStr20, redCAmount: Uint128)
+  msg_to_token =  {
+    _tag : "Transfer";
+    _recipient: address;
+    _amount: amount_zero;
+    from: _this_address;
+    to: address;
+    amount: redCAmount
+  };
+  msgs = one_msg msg_to_token;
   send msgs
 end
 
@@ -120,8 +134,35 @@ transition withdrawFund(address: ByStr20, amount: Uint128)
     end
 end
 
+transition withdrawRedC(address: ByStr20, amount: Uint128)
+  emptyFund = builtin eq amount zero;
+  match emptyFund with
+    | False =>
+      isOwner = builtin eq owner _sender;
+      match isOwner with
+        | True =>
+          withdrawToken address amount;
+          e = {_eventname: "RedCWithDrawn"; by: "Owner"; sender: _sender; to: address; amount: amount};
+          event e
+        | False =>
+          err = CodeUnauthorized;
+          ThrowError err
+        end
+    | True =>
+      err = CodeNoZilRequested;
+      ThrowError err
+    end
+end
+
 transition RecipientAcceptTransferFrom(
   initiator : ByStr20,
+  sender : ByStr20,
+  recipient : ByStr20,
+  amount : Uint128
+)
+end
+
+transition TransferSuccessCallBack(
   sender : ByStr20,
   recipient : ByStr20,
   amount : Uint128

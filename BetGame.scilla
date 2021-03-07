@@ -70,7 +70,7 @@ let winPool = Uint32 0
 let loosePool = Uint32 1
 let drawPool = Uint32 2
 
-let redCChargeForFirst = Uint128 2
+let redCChargeForFirst = Uint128 1
 let redCChargeAfterFirst = Uint128 10
 
 type GameData = | GameData of String String String ByStr20

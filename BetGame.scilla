@@ -70,8 +70,8 @@ let winPool = Uint32 0
 let loosePool = Uint32 1
 let drawPool = Uint32 2
 
-let redCChargeForFirst = Uint128 1
-let redCChargeAfterFirst = Uint128 10
+let redCChargeForFirst = Uint128 1000000000
+let redCChargeAfterFirst = Uint128 10000000000
 
 type GameData = | GameData of String String String ByStr20
 (*type GameData = | GameData of HomeTeam AwayTeam StartingOn HostedBy*)

@@ -18,7 +18,7 @@ type Error =
 | CodeIsNotOpenForBet
 | CodeGameStatusNotAvailable
 | CodeGameNotAvailable
-| CodeHostNotVerified
+| CodeGameNotCompleted
 | CodeGameNotVerified
 | CodeNotWinner
 | CodeResultNotAvailable
@@ -37,7 +37,7 @@ let make_error =
       | CodeIsNotOpenForBet           => Int32 -5
       | CodeGameStatusNotAvailable    => Int32 -6
       | CodeGameNotAvailable          => Int32 -7
-      | CodeHostNotVerified           => Int32 -8
+      | CodeGameNotCompleted          => Int32 -8
       | CodeGameNotVerified           => Int32 -9
       | CodeNotWinner                 => Int32 -10
       | CodeResultNotAvailable        => Int32 -11
@@ -59,8 +59,7 @@ let host_fraction = Uint128 10
 let open_for_bet = Uint32 0
 let started = Uint32 1
 let completed = Uint32 2
-let partial_verified = Uint32 3
-let verified = Uint32 4
+let verified = Uint32 3
 
 (* Game Bet Status *)
 let not_redeemed = Uint32 0
@@ -69,6 +68,7 @@ let redeemed = Uint32 1
 let winPool = Uint32 0
 let loosePool = Uint32 1
 let drawPool = Uint32 2
+
 
 let redCChargeForFirst = Uint128 1000000000
 let redCChargeAfterFirst = Uint128 10000000000
@@ -153,7 +153,7 @@ procedure initPool(gameID: String)
   totalDrawPoolBet[gameID] := zero;
   totalWinPoolBetAmount[gameID] := amount_zero;
   totalDrawPoolBetAmount[gameID] := amount_zero;
-  totalWinPoolBetAmount[gameID] := amount_zero
+  totalLoosePoolBetAmount[gameID] := amount_zero
 end
 
 procedure createBet(betID: String, gameID: String, bet: Bet)
@@ -314,14 +314,19 @@ procedure buildPool(gameID: String, winner: Uint32)
 end
 
 procedure callForTreasury(redeem: Uint128)
-  msg = {_tag: "withdrawFund"; 
-          _recipient: treasury; 
-          _amount: _amount;
-          address: _sender;
-          amount: redeem
-  };
-  msgs = one_msg msg;
-  send msgs
+  isAmountZero = builtin eq redeem amount_zero;
+  match isAmountZero with
+    | True =>
+    | False =>
+      msg = {_tag: "withdrawFund"; 
+              _recipient: treasury; 
+              _amount: _amount;
+              address: _sender;
+              amount: redeem
+      };
+      msgs = one_msg msg;
+      send msgs
+    end
 end
 
 procedure calculateRedeemFund(gameId: String, amount: Uint128)
@@ -352,26 +357,25 @@ procedure redeemHost(gameID: String)
     match v with
       | GameData homeTeam awayTeam startingOn hostedBy =>
         is_host = builtin eq hostedBy _sender;
-        match is_host with
-          | True =>
-            temp_totalDistributePool <- totalDistributePool[gameID];
-            match temp_totalDistributePool with
-              | Some v2 =>
-                temp_fraction = builtin div v2 host_fraction;
+        temp_totalDistributePool <- totalDistributePool[gameID];
+        match temp_totalDistributePool with
+          | Some v2 =>
+            temp_fraction = builtin div v2 host_fraction;
+            isAmountZero = builtin eq temp_fraction amount_zero;
+            match isAmountZero with
+              | True =>
+              | False =>
                 msg = {_tag: "withdrawFund"; 
                     _recipient: treasury; 
                     _amount: _amount;
-                    address: _sender;
+                    address: hostedBy;
                     amount: temp_fraction
                 };
                 msgs = one_msg msg;
                 send msgs
-              | None =>
-                err = CodePoolUnavailable;
-                ThrowError err
-            end
-          | False =>
-            err = CodeUnauthorized;
+              end
+          | None =>
+            err = CodePoolUnavailable;
             ThrowError err
         end
     end
@@ -383,22 +387,22 @@ end
 
 procedure markGameAsVerified(gameID: String, winner: Uint32)
   temp_result <- results[gameID];
-  match  temp_result with
-    | Some v =>
+  match temp_result with
+    | Some v1 =>
       isOwner = builtin eq owner _sender;
       match isOwner with
         | True =>
           temp_gameStatus <- gameStatus[gameID];
           match temp_gameStatus with
-            | Some v =>
-              hasHostVerified = builtin eq v partial_verified;
-              match hasHostVerified with
+            | Some v2 =>
+              hasCompleted = builtin eq v2 completed;
+              match hasCompleted with
                 | True =>
                   gameStatus[gameID] := verified;
                   buildPool gameID winner;
                   redeemHost gameID
                 | False =>
-                  err = CodeHostNotVerified;
+                  err = CodeGameNotCompleted;
                   ThrowError err
                 end
             | None =>
@@ -406,24 +410,8 @@ procedure markGameAsVerified(gameID: String, winner: Uint32)
               ThrowError err
             end
         | False =>
-          tempGame <- games[gameID];
-          match tempGame with
-          | Some v =>
-            match v with
-              | GameData homeTeam awayTeam startingOn hostedBy =>
-                is_host = builtin eq hostedBy _sender;
-                match is_host with
-                  | True =>
-                    gameStatus[gameID] := partial_verified
-                  | False =>
-                    err = CodeUnauthorized;
-                    ThrowError err
-                end
-            end
-          | None =>
-            err = CodeGameNotAvailable;
-            ThrowError err
-          end
+          err = CodeUnauthorized;
+          ThrowError err
         end
     | None =>   
       err = CodeResultNotAvailable;
@@ -434,21 +422,21 @@ end
 transition createGame(gameID: String, homeTeam: String, awayTeam: String, startingOn: String)
   game_check <- games[gameID];
   match game_check with
-    | Some v =>
+    | Some v1 =>
       err = CodeGameAlreadyExists;
       ThrowError err
     | None =>
       temp_userHostedGamesCount <- userHostedGamesCount[_sender];
       match temp_userHostedGamesCount with
-        | Some v =>
-          isFirstGame = builtin eq v zero;
+        | Some v2 =>
+          isFirstGame = builtin eq v2 zero;
           match  isFirstGame  with
             | True =>
               depositRedC redCChargeForFirst
             | False =>
               depositRedC redCChargeAfterFirst
           end;
-          adduserHostedGamesCount = builtin add v incr;
+          adduserHostedGamesCount = builtin add v2 incr;
           userHostedGamesCount[_sender] := adduserHostedGamesCount
         | None =>
           depositRedC redCChargeForFirst;
@@ -470,17 +458,17 @@ transition bet(gameID: String, betID: String, betSelected: Uint32)
     | False =>
       gameForBet <- games[gameID];
       match gameForBet with
-        | Some v =>
+        | Some v1 =>
           bet_check <- bets[gameID];
           match bet_check with
-            | Some v =>
+            | Some v2 =>
               err = CodeBetAlreadyExists;
               ThrowError err
             | None =>
               tempGamesForResponse <- gameStatus[gameID];
               match tempGamesForResponse with
-              | Some v =>
-                is_open_for_bet = builtin eq open_for_bet v;
+              | Some v3 =>
+                is_open_for_bet = builtin eq open_for_bet v3;
                 match is_open_for_bet with
                   | True =>
                     updatePool gameID betSelected;
@@ -525,8 +513,8 @@ end
 transition flashGameResults(gameID: String, finalScore: String, winner: Uint32)
   tempGame <- games[gameID];
     match tempGame with
-    | Some v =>
-      match v with
+    | Some v1 =>
+      match v1 with
         | GameData homeTeam awayTeam startingOn hostedBy =>
           temp_oracleAddress <- oracleAddress;
           is_oracle = builtin eq temp_oracleAddress _sender;
@@ -536,8 +524,8 @@ transition flashGameResults(gameID: String, finalScore: String, winner: Uint32)
               flashResult gameID finalScore winner;
               temp_userHostedGamesCount <- userHostedGamesCount[hostedBy];
               match temp_userHostedGamesCount with
-                | Some v =>
-                  deduct_userHostedGamesCount = builtin sub v incr;
+                | Some v2 =>
+                  deduct_userHostedGamesCount = builtin sub v2 incr;
                   userHostedGamesCount[hostedBy] :=  deduct_userHostedGamesCount
                 | None =>
                   userHostedGamesCount[hostedBy] :=  zero
@@ -556,13 +544,13 @@ end
 transition verifyGameResults(gameID: String)
   gameToVerify <- games[gameID];
   match gameToVerify with
-    | Some v =>
+    | Some v1 =>
       temp_result <- results[gameID];
       match temp_result with
-        | Some v =>
-          match v with
+        | Some v2 =>
+          match v2 with
             | Result finalScore winner =>
-                markGameAsVerified gameID winner
+              markGameAsVerified gameID winner
           end
         | None =>
           err = CodeResultNotAvailable;
@@ -577,27 +565,27 @@ end
 transition redeem(gameID: String)
 gameToVerify <- games[gameID];
   match gameToVerify with
-    | Some v =>
+    | Some v1 =>
       temp_gameStatus <- gameStatus[gameID];
       match temp_gameStatus with
-        | Some v =>
-          game_status = v;
+        | Some v2 =>
+          game_status = v2;
               gameResult <- results[gameID];
               match gameResult with
-                | Some v =>
-                  match v with
+                | Some v3 =>
+                  match v3 with
                     | Result temp_finalScore temp_winner =>
                       isVerified = builtin eq verified game_status;
                       match isVerified with
                         | True =>
                           betID <- playerBets[_sender][gameID];
                           match betID with
-                            | Some v =>
-                              betStatus[v] := redeemed;
-                              playerBet <- bets[v];
+                            | Some v4 =>
+                              betStatus[v4] := redeemed;
+                              playerBet <- bets[v4];
                               match playerBet with
-                                | Some v =>
-                                  match v with
+                                | Some v5 =>
+                                  match v5 with
                                   | Bet gameId playerAddress betSelected amount =>
                                     isWinner = builtin eq betSelected temp_winner;
                                     match isWinner with

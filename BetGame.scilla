@@ -217,7 +217,8 @@ contract BetGame
 (owner: ByStr20,
 treasury: ByStr20,
 oracle: ByStr20,
-redC: ByStr20)
+redC: ByStr20,
+developer: ByStr20)
                           
 field playerBets: Map ByStr20 (Map String String) (* Address => GameID => BetID*)
                 = Emp ByStr20 (Map String String)
@@ -279,15 +280,6 @@ procedure createNewGame(gameID: String, gameData: GameData)
     
     e = {_eventname : "GameCreated"; host : _sender; gameID: gameID};
     event e
-end
-
-procedure initPool(gameID: String)
-  totalWinPoolBet[gameID] := zero;
-  totalLoosePoolBet[gameID] := zero;
-  totalDrawPoolBet[gameID] := zero;
-  totalWinPoolBetAmount[gameID] := amount_zero;
-  totalDrawPoolBetAmount[gameID] := amount_zero;
-  totalLoosePoolBetAmount[gameID] := amount_zero
 end
 
 procedure createBet(betID: String, gameID: String, bet: Bet)
@@ -541,24 +533,15 @@ transition createGame(gameID: String, homeTeam: String, awayTeam: String, starti
       ThrowError err
     | None =>
       temp_userHostedGamesCount <- userHostedGamesCount[_sender];
-      match temp_userHostedGamesCount with
-        | Some v2 =>
-          isFirstGame = builtin eq v2 zero;
-          match  isFirstGame  with
-            | True =>
-              depositRedC redCChargeForFirst
-            | False =>
-              depositRedC redCChargeAfterFirst
-          end;
-          adduserHostedGamesCount = builtin add v2 incr;
-          userHostedGamesCount[_sender] := adduserHostedGamesCount
-        | None =>
-          depositRedC redCChargeForFirst;
-          userHostedGamesCount[_sender] := incr
-      end;
+      
+      redCAmount = redCCharge temp_userHostedGamesCount;
+      depositRedC redCAmount;
+      
+      temp_increaseUserHostedGamesCount = increaseUserHostedGamesCount temp_userHostedGamesCount;
+      userHostedGamesCount[_sender] :=  temp_increaseUserHostedGamesCount;
+      
       new_game = GameData homeTeam awayTeam startingOn _sender;
-      createNewGame gameID new_game;
-      initPool gameID
+      createNewGame gameID new_game
     end
 end
 

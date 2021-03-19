@@ -12,6 +12,7 @@ type Error =
 | CodeUnauthorized
 | CodeNoZilSent
 | CodeNoZilRequested
+| CodeNoRedCRequested
 
 let make_error =
   fun (result : Error) =>
@@ -20,6 +21,7 @@ let make_error =
       | CodeUnauthorized              => Int32 -1
       | CodeNoZilSent                 => Int32 -2
       | CodeNoZilRequested            => Int32 -3
+      | CodeNoRedCRequested           => Int32 -4
       end
     in
     { _exception : "Error"; code : result_code }
@@ -55,9 +57,8 @@ end
 procedure withdrawToken(address: ByStr20, redCAmount: Uint128)
   msg_to_token =  {
     _tag : "Transfer";
-    _recipient: address;
+    _recipient: redC;
     _amount: amount_zero;
-    from: _this_address;
     to: address;
     amount: redCAmount
   };
@@ -149,7 +150,7 @@ transition withdrawRedC(address: ByStr20, amount: Uint128)
           ThrowError err
         end
     | True =>
-      err = CodeNoZilRequested;
+      err = CodeNoRedCRequested;
       ThrowError err
     end
 end

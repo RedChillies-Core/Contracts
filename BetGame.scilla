@@ -118,7 +118,8 @@ field userHostedGamesCount: Map ByStr20 Uint32 (* Address => TotalGamesHosted*)
                 = Emp ByStr20 Uint32
                 
 field oracleAddress : ByStr20 = oracle
-field minimumBet: Uint128 = Uint128 20
+field minimumBet: Uint128 = Uint128 20000000000000
+field developerAddress: ByStr20 = developer
 
 procedure ThrowError(err : Error)
   e = make_error err;

@@ -612,9 +612,6 @@ gameToVerify <- games[gameID];
   match gameToVerify with
     | Some v1 =>
       temp_gameStatus <- gameStatus[gameID];
-      match temp_gameStatus with
-        | Some v2 =>
-          game_status = v2;
       gameResult <- results[gameID];
       match gameResult with
         | Some v3 =>

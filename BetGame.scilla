@@ -368,55 +368,41 @@ procedure setTotalPool(gameID: String, totalAmount: Uint128)
   totalDistributePool[gameID] := totalPoolFraction
 end
 
+procedure recordPool(gameID: String, temp_totalPool: Uint128, temp_totalPoolBetAmount: Option Uint128)
+  tempDistributePercentage = distributePercentage temp_totalPool;
+  totalDistributePool[gameID] := tempDistributePercentage;
+  tempTotalPool = getAmount temp_totalPoolBetAmount;
+  totalPool[gameID] := tempTotalPool
+end
+
 procedure buildPool(gameID: String, winner: Uint32)
   temp_totalWinPoolBetAmount <- totalWinPoolBetAmount[gameID];
   temp_totalLoosePoolBetAmount <- totalLoosePoolBetAmount[gameID];
   temp_totalDrawPoolBetAmount <- totalDrawPoolBetAmount[gameID];
   
-  match temp_totalWinPoolBetAmount with
-    | Some v1 =>
-      match temp_totalLoosePoolBetAmount with
-      | Some v2 =>
-        match temp_totalDrawPoolBetAmount with
-        | Some v3 =>
-          is_Win = builtin eq winner winPool;
-          match is_Win with
+  is_Win = builtin eq winner winPool;
+  match is_Win with
+    | True =>
+      temp_totalWinPool = calculatePool temp_totalLoosePoolBetAmount temp_totalDrawPoolBetAmount;
+      recordPool gameID temp_totalWinPool temp_totalWinPoolBetAmount
+    | False =>
+      is_Loose = builtin eq winner loosePool;
+      match is_Loose with
+        | True =>
+          temp_totalLoosePool = calculatePool temp_totalWinPoolBetAmount temp_totalDrawPoolBetAmount;
+          recordPool gameID temp_totalLoosePool temp_totalLoosePoolBetAmount
+        | False =>
+          is_Draw = builtin eq winner drawPool;
+          match is_Draw with
             | True =>
-              temp_totalWinPool = builtin add v2 v3;
-              setTotalPool gameID temp_totalWinPool;
-              totalPool[gameID] := v1
+              temp_totalDrawPool = calculatePool temp_totalWinPoolBetAmount temp_totalLoosePoolBetAmount;
+              recordPool gameID temp_totalDrawPool temp_totalDrawPoolBetAmount
             | False =>
-              is_Loose = builtin eq winner loosePool;
-              match is_Loose with
-                | True =>
-                  temp_totalLoosePool = builtin add v1 v3;
-                  setTotalPool gameID temp_totalLoosePool;
-                  totalPool[gameID] := v2
-                | False =>
-                  is_Draw = builtin eq winner drawPool;
-                  match is_Draw with
-                    | True =>
-                      temp_totalDrawPool = builtin add v1 v2;
-                      setTotalPool gameID temp_totalDrawPool;
-                      totalPool[gameID] := v3
-                    | False =>
-                      err = CodeInvalidWinner;
-                      ThrowError err
-                  end
-              end
-            end
-        | None =>
-          err = CodePoolUnavailable;
-          ThrowError err
-        end
-      | None =>
-        err = CodePoolUnavailable;
-        ThrowError err
+              err = CodeInvalidWinner;
+              ThrowError err
+          end
       end
-    | None =>
-      err = CodePoolUnavailable;
-      ThrowError err
-  end
+    end
 end
 
 procedure callForTreasury(redeem: Uint128, receiver: ByStr20)
@@ -443,38 +429,20 @@ procedure calculateRedeemFund(gameId: String, amount: Uint128)
   callForTreasury total_redeem  _sender
 end
 
-procedure redeemHost(gameID: String)
+procedure redeemHostAndAdmin(gameID: String)
   tempGame <- games[gameID];
-  match tempGame with
-  | Some v =>
-    match v with
-      | GameData homeTeam awayTeam startingOn hostedBy =>
-        is_host = builtin eq hostedBy _sender;
-        temp_totalDistributePool <- totalDistributePool[gameID];
-        match temp_totalDistributePool with
-          | Some v2 =>
-            temp_fraction = builtin div v2 host_fraction;
-            isAmountZero = builtin eq temp_fraction amount_zero;
-            match isAmountZero with
-              | True =>
-              | False =>
-                msg = {_tag: "withdrawFund"; 
-                    _recipient: treasury; 
-                    _amount: _amount;
-                    address: hostedBy;
-                    amount: temp_fraction
-                };
-                msgs = one_msg msg;
-                send msgs
-              end
-          | None =>
-            err = CodePoolUnavailable;
-            ThrowError err
-        end
-    end
-  | None =>
-    err = CodeGameNotAvailable;
-    ThrowError err
+  
+  host = hostOfGame tempGame owner;
+  temp_totalDistributePool <- totalDistributePool[gameID];
+  match temp_totalDistributePool with
+    | Some v2 =>
+      temp_fraction = builtin div v2 host_fraction;
+      callForTreasury temp_fraction host;
+      temp_developerAddress <- developerAddress;
+      callForTreasury temp_fraction temp_developerAddress
+    | None =>
+      err = CodePoolUnavailable;
+      ThrowError err
   end
 end
 
@@ -486,20 +454,14 @@ procedure markGameAsVerified(gameID: String, winner: Uint32)
       match isOwner with
         | True =>
           temp_gameStatus <- gameStatus[gameID];
-          match temp_gameStatus with
-            | Some v2 =>
-              hasCompleted = builtin eq v2 completed;
-              match hasCompleted with
-                | True =>
-                  gameStatus[gameID] := verified;
-                  buildPool gameID winner;
-                  redeemHost gameID
-                | False =>
-                  err = CodeGameNotCompleted;
-                  ThrowError err
-                end
-            | None =>
-              err = CodeUnauthorized;
+          hasCompleted =  checkStatus temp_gameStatus completed;
+          match hasCompleted with
+            | True =>
+              gameStatus[gameID] := verified;
+              buildPool gameID winner;
+              redeemHostAndAdmin gameID
+            | False =>
+              err = CodeGameNotCompleted;
               ThrowError err
             end
         | False =>

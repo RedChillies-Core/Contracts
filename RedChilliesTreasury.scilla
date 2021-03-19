@@ -12,6 +12,7 @@ type Error =
 | CodeUnauthorized
 | CodeNoZilSent
 | CodeNoZilRequested
+| CodeNoRedCRequested
 
 let make_error =
   fun (result : Error) =>
@@ -20,6 +21,7 @@ let make_error =
       | CodeUnauthorized              => Int32 -1
       | CodeNoZilSent                 => Int32 -2
       | CodeNoZilRequested            => Int32 -3
+      | CodeNoRedCRequested           => Int32 -4
       end
     in
     { _exception : "Error"; code : result_code }
@@ -29,7 +31,8 @@ let amount_zero = Uint128 0
 let success = Uint128 200
 
 contract RedChilliesTreasury
-(owner: ByStr20)
+(owner: ByStr20,
+redC: ByStr20)
 
 field games : Map ByStr20 String
               = Emp ByStr20 String
@@ -40,7 +43,11 @@ procedure ThrowError(err : Error)
 end
               
 procedure registerNewGame(game: String, address: ByStr20)
-    games[address] := game
+  games[address] := game
+end
+
+procedure removeFaultyGame(address: ByStr20)
+  delete games[address]
 end
 
 procedure withDraw(address: ByStr20, amount: Uint128)
@@ -55,9 +62,8 @@ end
 procedure withdrawToken(address: ByStr20, redCAmount: Uint128)
   msg_to_token =  {
     _tag : "Transfer";
-    _recipient: address;
+    _recipient: redC;
     _amount: amount_zero;
-    from: _this_address;
     to: address;
     amount: redCAmount
   };
@@ -71,6 +77,19 @@ transition registerGame(gameName: String, address: ByStr20)
     | True =>
       registerNewGame gameName address;
       e = {_eventname: "GameRegistered";  address: _sender; gameAddress: address};
+      event e
+    | False =>
+      err = CodeUnauthorized;
+      ThrowError err
+  end
+end
+
+transition removeGame(address: ByStr20)
+  isOwner = builtin eq owner _sender;
+  match isOwner with
+    | True =>
+      removeFaultyGame address;
+      e = {_eventname: "GameRemoved";  address: _sender; gameAddress: address};
       event e
     | False =>
       err = CodeUnauthorized;
@@ -149,7 +168,7 @@ transition withdrawRedC(address: ByStr20, amount: Uint128)
           ThrowError err
         end
     | True =>
-      err = CodeNoZilRequested;
+      err = CodeNoRedCRequested;
       ThrowError err
     end
 end

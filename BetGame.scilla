@@ -599,33 +599,36 @@ end
 
 transition flashGameResults(gameID: String, finalScore: String, winner: Uint32)
   tempGame <- games[gameID];
-    match tempGame with
-    | Some v1 =>
-      match v1 with
-        | GameData homeTeam awayTeam startingOn hostedBy =>
-          temp_oracleAddress <- oracleAddress;
-          is_oracle = builtin eq temp_oracleAddress _sender;
-          match is_oracle with
+  
+  match tempGame with
+    | Some v =>
+      host = hostOfGame tempGame owner;
+      temp_oracleAddress <- oracleAddress;
+      is_oracle = builtin eq temp_oracleAddress _sender;
+      match is_oracle with
+        | True =>
+          status <- gameStatus[gameID];
+          is_Started = checkStatus status started;
+          match is_Started with
             | True =>
               gameStatus[gameID] := completed;
               flashResult gameID finalScore winner;
-              temp_userHostedGamesCount <- userHostedGamesCount[hostedBy];
-              match temp_userHostedGamesCount with
-                | Some v2 =>
-                  deduct_userHostedGamesCount = builtin sub v2 incr;
-                  userHostedGamesCount[hostedBy] :=  deduct_userHostedGamesCount
-                | None =>
-                  userHostedGamesCount[hostedBy] :=  zero
-              end
+              temp_userHostedGamesCount <- userHostedGamesCount[host];
+              
+              deduct_userHostedGamesCount = decreaseUserHostedGamesCount temp_userHostedGamesCount;
+              userHostedGamesCount[host] :=  deduct_userHostedGamesCount
             | False =>
-              err = CodeUnauthorized;
+              err = CodeGameNotStarted;
               ThrowError err
           end
+        | False =>
+          err = CodeUnauthorized;
+          ThrowError err
       end
     | None =>
       err = CodeGameNotAvailable;
       ThrowError err
-    end
+  end
 end
 
 transition verifyGameResults(gameID: String)

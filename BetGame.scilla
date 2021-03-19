@@ -194,31 +194,6 @@ let make_error =
     in
     { _exception : "Error"; code : result_code }
 
-let loose = Uint32 13
-
-let zero = Uint32 0
-let amount_zero = Uint128 0
-let incr = Uint32 1
-let host_fraction = Uint128 10
-
-(* Game Status *)
-let open_for_bet = Uint32 0
-let started = Uint32 1
-let completed = Uint32 2
-let verified = Uint32 3
-
-(* Game Bet Status *)
-let not_redeemed = Uint32 0
-let redeemed = Uint32 1
-
-let winPool = Uint32 0
-let loosePool = Uint32 1
-let drawPool = Uint32 2
-
-
-let redCChargeForFirst = Uint128 1000000000
-let redCChargeAfterFirst = Uint128 10000000000
-
 type GameData = | GameData of String String String ByStr20
 (*type GameData = | GameData of HomeTeam AwayTeam StartingOn HostedBy*)
 type Bet = | Bet of String ByStr20 Uint32 Uint128

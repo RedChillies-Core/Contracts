@@ -316,6 +316,12 @@ procedure initPool(gameID: String)
 end
 
 procedure createBet(betID: String, gameID: String, bet: Bet)
+    hasPlayerBetted <- playerBets[_sender][gameID];
+    match hasPlayerBetted with
+      | Some v =>
+        err = CodeAlreadyBetted;
+        ThrowError err
+      | None =>
     accept;
     bets[betID] := bet;
     playerBets[_sender][gameID] := betID;

@@ -419,7 +419,7 @@ procedure buildPool(gameID: String, winner: Uint32)
   end
 end
 
-procedure callForTreasury(redeem: Uint128)
+procedure callForTreasury(redeem: Uint128, receiver: ByStr20)
   isAmountZero = builtin eq redeem amount_zero;
   match isAmountZero with
     | True =>
@@ -427,7 +427,7 @@ procedure callForTreasury(redeem: Uint128)
       msg = {_tag: "withdrawFund"; 
               _recipient: treasury; 
               _amount: _amount;
-              address: _sender;
+              address: receiver;
               amount: redeem
       };
       msgs = one_msg msg;
@@ -438,22 +438,9 @@ end
 procedure calculateRedeemFund(gameId: String, amount: Uint128)
   temp_totalPool <- totalPool[gameId];
   temp_totalDistributePool <- totalDistributePool[gameId];
-  match temp_totalPool with
-    | Some v1 =>
-      match temp_totalDistributePool with
-        | Some v2 =>
-          temp_factor = builtin mul amount v2;
-          temp_fraction = builtin div temp_factor v1;
-          total_redeem = builtin add temp_fraction amount;
-          callForTreasury total_redeem
-        | None =>
-          err = CodePoolUnavailable;
-          ThrowError err
-      end
-    | None =>
-      err = CodePoolUnavailable;
-      ThrowError err
-  end
+  
+  total_redeem = calculateRedeemFund temp_totalPool temp_totalDistributePool amount;
+  callForTreasury total_redeem  _sender
 end
 
 procedure redeemHost(gameID: String)
@@ -670,52 +657,56 @@ gameToVerify <- games[gameID];
       match temp_gameStatus with
         | Some v2 =>
           game_status = v2;
-              gameResult <- results[gameID];
-              match gameResult with
-                | Some v3 =>
-                  match v3 with
-                    | Result temp_finalScore temp_winner =>
-                      isVerified = builtin eq verified game_status;
-                      match isVerified with
+      gameResult <- results[gameID];
+      match gameResult with
+        | Some v3 =>
+          match v3 with
+            | Result temp_finalScore temp_winner =>
+              isVerified = checkStatus temp_gameStatus verified;
+              match isVerified with
+                | True =>
+                  betID <- playerBets[_sender][gameID];
+                  match betID with
+                    | Some v4 =>
+                      status <- betStatus[v4];
+                      isRedeemed = checkStatus status redeemed;
+                      match isRedeemed with
                         | True =>
-                          betID <- playerBets[_sender][gameID];
-                          match betID with
-                            | Some v4 =>
-                              betStatus[v4] := redeemed;
-                              playerBet <- bets[v4];
-                              match playerBet with
-                                | Some v5 =>
-                                  match v5 with
-                                  | Bet gameId playerAddress betSelected amount =>
-                                    isWinner = builtin eq betSelected temp_winner;
-                                    match isWinner with
-                                      | True =>
-                                        calculateRedeemFund gameID amount
-                                      | False =>
-                                        err = CodeNotWinner;
-                                        ThrowError err
-                                    end
-                                  end
-                                | None =>
-                                  err = CodeBetNotAvailable;
-                                  ThrowError err
+                          err = CodeBetAlreadyRedemeed;
+                          ThrowError err
+                        | False =>
+                          betStatus[v4] := redeemed;
+                          playerBet <- bets[v4];
+                          match playerBet with
+                            | Some v5 =>
+                              match v5 with
+                              | Bet gameId playerAddress betSelected amount =>
+                                isWinner = builtin eq betSelected temp_winner;
+                                match isWinner with
+                                  | True =>
+                                    calculateRedeemFund gameID amount
+                                  | False =>
+                                    err = CodeNotWinner;
+                                    ThrowError err
+                                end
                               end
                             | None =>
                               err = CodeBetNotAvailable;
                               ThrowError err
                           end
-                        | False =>
-                          err = CodeGameNotVerified;
-                          ThrowError err
-                      end
+                        end
+                    | None =>
+                      err = CodeBetNotAvailable;
+                      ThrowError err
                   end
-                | None =>
-                  err = CodeResultNotAvailable;
+                | False =>
+                  err = CodeGameNotVerified;
                   ThrowError err
-                end
-            | None =>
-              err = CodeGameStatusNotAvailable;
-              ThrowError err
+              end
+          end
+        | None =>
+          err = CodeResultNotAvailable;
+          ThrowError err
         end
     | None =>
       err = CodeGameNotAvailable;

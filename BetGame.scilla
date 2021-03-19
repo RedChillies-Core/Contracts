@@ -226,6 +226,18 @@ type Bet = | Bet of String ByStr20 Uint32 Uint128
 type Result = | Result of String Uint32
 (*type Result = | Result of FinalScore Winner*)
 
+let hostOfGame =
+  fun (game: Option GameData) =>
+  fun (owner: ByStr20) =>
+    match game with
+      | Some gameData =>
+        match gameData with
+          | GameData _ _ _ hostedBy => hostedBy
+        end
+      | None => owner
+    end
+          
+
 contract BetGame
 (owner: ByStr20,
 treasury: ByStr20,

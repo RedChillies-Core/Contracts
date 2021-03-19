@@ -8,7 +8,145 @@ let one_msg =
   fun (msg: Message) =>
   let nil_msg = Nil {Message} in
   Cons {Message} msg nil_msg
+ 
+let zero = Uint32 0 
+let incr = Uint32 1
+let amount_zero = Uint128 0
+
+let percentage = Uint128 80
+let total = Uint128 100
+
+let redCChargeForFirst = Uint128 1000000000
+let redCChargeAfterFirst = Uint128 10000000000
+
+let loose = Uint32 13
+
+let host_fraction = Uint128 8
+
+(* Game Status *)
+let open_for_bet = Uint32 0
+let started = Uint32 1
+let completed = Uint32 2
+let verified = Uint32 3
+
+(* Game Bet Status *)
+let not_redeemed = Uint32 0
+let redeemed = Uint32 1
+
+let winPool = Uint32 0
+let loosePool = Uint32 1
+let drawPool = Uint32 2
+
+let distributePercentage =
+  fun (amount: Uint128) =>
+    let multiplied = builtin mul amount percentage in
+    builtin div multiplied total
+    
+let calculateRedeemFund =
+  fun (pool: Option Uint128) =>
+  fun (distributePool: Option Uint128) =>
+  fun (amount: Uint128) =>
+    match pool with
+      | Some poolValue =>
+        match distributePool with
+          | Some distributePoolValue =>
+            let multiplied = builtin mul amount distributePoolValue in
+            let divided = builtin div multiplied poolValue in
+            builtin add divided amount
+          | None => amount_zero
+        end
+      | None => amount_zero
+    end
   
+let addTotalPoolBet =
+  fun (bet: Option Uint32) =>
+    match bet with
+      | Some x => builtin add x incr
+      | None => incr
+    end
+    
+let getAmount =
+  fun (amount: Option Uint128) =>
+    match amount with
+      | Some x => x
+      | None => amount_zero
+    end
+    
+let checkStatus =
+  fun (status: Option Uint32) =>
+  fun (flag: Uint32) =>
+    match status with
+      | Some x => builtin eq x flag
+      | None => False
+    end
+    
+let getValue =
+  fun (amount: Option Uint32) =>
+    match amount with
+      | Some x => x
+      | None => zero
+    end
+    
+let addTotalPoolBetAmount =
+  fun (pool: Option Uint128) =>
+  fun (amount: Uint128) =>
+    match pool with
+      | Some x => builtin add x amount
+      | None => amount
+    end
+    
+let calculatePool = 
+  fun (s1: Option Uint128) =>
+  fun (s2: Option Uint128) =>
+    match s1 with
+      | Some v1 =>
+        match s2 with
+          | Some v2 => builtin add v1 v2
+          | None => v1
+        end
+      | None =>
+        match s2 with
+          | Some v2 =>  v2
+          | None => amount_zero
+        end
+    end
+    
+  let redCCharge =
+    fun (gamesCount: Option Uint32) =>
+    match gamesCount with
+      | Some v => 
+        let count = builtin eq v zero in
+        match count with
+          | True => redCChargeForFirst
+          | False => redCChargeAfterFirst
+        end
+      | None => redCChargeForFirst
+    end
+    
+  let increaseUserHostedGamesCount =
+    fun (userHostedGamesCount: Option Uint32)  =>
+      match userHostedGamesCount with
+      | Some v => builtin add v incr
+      | None => incr
+    end
+    
+  let decreaseUserHostedGamesCount =
+    fun (userHostedGamesCount: Option Uint32)  =>
+      match userHostedGamesCount with
+      | Some v =>
+        let iszero = builtin eq v zero in
+        match iszero with
+          | True => zero
+          | False => builtin sub v incr
+        end
+      | None => zero
+    end
+    
+  let checkMinimumBet =
+    fun (minBet: Uint128) =>
+    fun (amount: Uint128) =>
+      builtin lt amount minBet
+
 (* Error events *)
 type Error =
 | CodeUnauthorized

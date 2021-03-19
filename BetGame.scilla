@@ -162,7 +162,11 @@ type Error =
 | CodeResultNotAvailable
 | CodeBetNotAvailable
 | CodePoolUnavailable 
-| BetAmountInsufficient
+| CodeBetAmountInsufficient
+| CodeBetAlreadyRedemeed
+| CodeBetStatusNotAvailable
+| CodeGameNotStarted
+| CodeAlreadyBetted
 
 let make_error =
   fun (result : Error) =>
@@ -181,7 +185,11 @@ let make_error =
       | CodeResultNotAvailable        => Int32 -11
       | CodeBetNotAvailable           => Int32 -12
       | CodePoolUnavailable           => Int32 -13
-      | BetAmountInsufficient         => Int32 -14
+      | CodeBetAmountInsufficient     => Int32 -14
+      | CodeBetAlreadyRedemeed        => Int32 -15
+      | CodeBetStatusNotAvailable     => Int32 -16
+      | CodeGameNotStarted            => Int32 -17
+      | CodeAlreadyBetted             => Int32 -18
       end
     in
     { _exception : "Error"; code : result_code }

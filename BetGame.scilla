@@ -736,6 +736,19 @@ transition updateOracle(address: ByStr20)
   end
 end
 
+transition updateDeveloperWallet(address: ByStr20)
+  isOwner = builtin eq _sender owner;
+  match isOwner with
+    | True =>
+      developerAddress := address;
+      e = {_eventname : "DeveloperWalletUpdated"; sender : _sender};
+      event e
+    | False =>
+      err = CodeUnauthorized;
+      ThrowError err
+  end
+end
+
 transition minimumBet(amount: Uint128)
   isOwner = builtin eq _sender owner;
   match isOwner with

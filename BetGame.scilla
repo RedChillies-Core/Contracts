@@ -539,9 +539,17 @@ transition gameStarted(gameID: String)
       is_oracle = builtin eq temp_oracleAddress _sender;
       match is_oracle with
         | True =>
-          gameStatus[gameID] := started;
-          e = {_eventname : "GameStarted"; gameID: gameID};
-          event e
+          temp_status <- gameStatus[gameID];
+          is_open_for_bet = checkStatus temp_status open_for_bet;
+          match is_open_for_bet with
+            | True =>
+              gameStatus[gameID] := started;
+              e = {_eventname : "GameStarted"; gameID: gameID};
+              event e
+            | False =>
+              err = CodeIsNotOpenForBet;
+              ThrowError err
+          end
         | False =>
           err = CodeUnauthorized;
           ThrowError err

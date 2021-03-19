@@ -526,14 +526,7 @@ transition bet(gameID: String, betID: String, betSelected: Uint32)
                   err = CodeIsNotOpenForBet;
                   ThrowError err
               end
-              | None =>
-                err = CodeGameStatusNotAvailable;
-                ThrowError err
-              end
           end
-        | None =>
-          err = CodeGameNotAvailable;
-          ThrowError err
       end
     end
 end

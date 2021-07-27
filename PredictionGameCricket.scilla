@@ -1,0 +1,868 @@
+scilla_version 0
+
+import BoolUtils IntUtils
+
+library PredictionGameCricket
+
+let one_msg =
+  fun (msg: Message) =>
+  let nil_msg = Nil {Message} in
+  Cons {Message} msg nil_msg
+
+let uint32_zero = Uint32 0
+let uint32_one = Uint32 1
+let uint32_two = Uint32 2
+let uint32_three = Uint32 3
+let uint32_four = Uint32 4
+let uint32_thirteen = Uint32 13
+
+let uint128_zero = Uint128 0
+let uint128_two = Uint128 2
+let uint128_eight = Uint128 8
+let uint128_eighty = Uint128 80
+let uint128_hundred = Uint128 100
+
+let burn = 0x0000000000000000000000000000000000000000
+
+let distributePercentage =
+  fun (amount: Uint128) =>
+    let multiplied = builtin mul amount uint128_eighty in
+    builtin div multiplied uint128_hundred
+    
+let calculateRedeemFund =
+  fun (pool: Option Uint128) =>
+  fun (distributePool: Option Uint128) =>
+  fun (amount: Uint128) =>
+    match pool with
+      | Some poolValue =>
+        match distributePool with
+          | Some distributePoolValue =>
+            let multiplied = builtin mul amount distributePoolValue in
+            let divided = builtin div multiplied poolValue in
+            builtin add divided amount
+          | None => uint128_zero
+        end
+      | None => uint128_zero
+    end
+  
+let addTotalPoolBet =
+  fun (bet: Option Uint32) =>
+    match bet with
+      | Some x => builtin add x uint32_one
+      | None => uint32_one
+    end
+    
+let getAmount =
+  fun (amount: Option Uint128) =>
+    match amount with
+      | Some x => x
+      | None => uint128_zero
+    end
+    
+let checkStatus =
+  fun (status: Option Uint32) =>
+  fun (flag: Uint32) =>
+    match status with
+      | Some x => builtin eq x flag
+      | None => False
+    end
+    
+let checkIfNotCompleted =
+  fun (status: Option Uint32) =>
+    match status with
+      | Some x => builtin lt x uint32_two
+      | None => False
+    end
+    
+let getValue =
+  fun (amount: Option Uint32) =>
+    match amount with
+      | Some x => x
+      | None => uint32_zero
+    end
+    
+let addTotalPoolBetAmount =
+  fun (pool: Option Uint128) =>
+  fun (amount: Uint128) =>
+    match pool with
+      | Some x => builtin add x amount
+      | None => amount
+    end
+    
+let calculatePool = 
+  fun (s1: Option Uint128) =>
+  fun (s2: Option Uint128) =>
+    match s1 with
+      | Some v1 =>
+        match s2 with
+          | Some v2 => builtin add v1 v2
+          | None => v1
+        end
+      | None =>
+        match s2 with
+          | Some v2 =>  v2
+          | None => uint128_zero
+        end
+    end
+    
+  let redCCharge =
+    fun (gamesCount: Option Uint32) =>
+    fun (defaultCharge: Uint128) =>
+    fun (customCharge: Uint128) =>
+    match gamesCount with
+      | Some v => 
+        let count = builtin eq v uint32_zero in
+        match count with
+          | True => defaultCharge
+          | False => customCharge
+        end
+      | None => defaultCharge
+    end
+    
+  let increaseUserHostedGamesCount =
+    fun (userHostedGamesCount: Option Uint32)  =>
+      match userHostedGamesCount with
+      | Some v => builtin add v uint32_one
+      | None => uint32_one
+    end
+    
+  let decreaseUserHostedGamesCount =
+    fun (userHostedGamesCount: Option Uint32)  =>
+      match userHostedGamesCount with
+      | Some v =>
+        let iszero = builtin eq v uint32_zero in
+        match iszero with
+          | True => uint32_zero
+          | False => builtin sub v uint32_one
+        end
+      | None => uint32_zero
+    end
+    
+  let checkMinimumBet =
+    fun (minBet: Uint128) =>
+    fun (amount: Uint128) =>
+      builtin lt amount minBet
+
+(* Error events *)
+type Error =
+| CodeUnauthorized
+| CodeGameAlreadyExists
+| CodeInvalidWinner
+| CodeBetAlreadyExists
+| CodeIsNotOpenForBet
+| CodeGameStatusNotAvailable
+| CodeGameNotAvailable
+| CodeGameNotCompleted
+| CodeGameNotVerified
+| CodeNotWinner
+| CodeResultNotAvailable
+| CodeBetNotAvailable
+| CodePoolUnavailable 
+| CodeBetAmountInsufficient
+| CodeBetAlreadyRedemeed
+| CodeBetStatusNotAvailable
+| CodeGameNotStarted
+| CodeAlreadyBetted
+| CodeGameAlreadyCompleted
+| CodeGameNotAborted
+
+let make_error =
+  fun (result : Error) =>
+    let result_code = 
+      match result with
+      | CodeUnauthorized              => Int32 -1
+      | CodeGameAlreadyExists         => Int32 -2
+      | CodeInvalidWinner             => Int32 -3
+      | CodeBetAlreadyExists          => Int32 -4
+      | CodeIsNotOpenForBet           => Int32 -5
+      | CodeGameStatusNotAvailable    => Int32 -6
+      | CodeGameNotAvailable          => Int32 -7
+      | CodeGameNotCompleted          => Int32 -8
+      | CodeGameNotVerified           => Int32 -9
+      | CodeNotWinner                 => Int32 -10
+      | CodeResultNotAvailable        => Int32 -11
+      | CodeBetNotAvailable           => Int32 -12
+      | CodePoolUnavailable           => Int32 -13
+      | CodeBetAmountInsufficient     => Int32 -14
+      | CodeBetAlreadyRedemeed        => Int32 -15
+      | CodeBetStatusNotAvailable     => Int32 -16
+      | CodeGameNotStarted            => Int32 -17
+      | CodeAlreadyBetted             => Int32 -18
+      | CodeGameAlreadyCompleted      => Int32 -19
+      | CodeGameNotAborted            => Int32 -20
+      end
+    in
+    { _exception : "Error"; code : result_code }
+
+type GameData = | GameData of String String String ByStr20 Uint128
+(*type GameData = | GameData of HomeTeam AwayTeam StartingOn HostedBy RedCCharge*)
+type Bet = | Bet of String ByStr20 Uint32 Uint128
+(* Bet = | Bet of GameID PlayerAddress BetSelected Amount*)
+type Result = | Result of String Uint32
+(*type Result = | Result of FinalScore Winner*)
+
+let hostOfGame =
+  fun (game: Option GameData) =>
+    match game with
+      | Some gameData =>
+        match gameData with
+          | GameData _ _ _ hostedBy _ => hostedBy
+        end
+      | None => burn
+    end
+    
+let winnerOfGame =
+  fun (result: Option Result) =>
+    match result with
+      | Some resultData =>
+        match resultData with
+          | Result _ winner => winner
+        end
+      | None => uint32_four
+    end
+    
+let redCChargeOfGame =
+  fun (game: Option GameData) =>
+  fun (defaultCharge: Uint128) =>
+    match game with
+      | Some gameData =>
+        match gameData with
+          | GameData _ _ _ _ redCCharge => redCCharge
+        end
+      | None => defaultCharge
+    end
+
+contract PredictionGameCricket
+(owner: ByStr20,
+treasury: ByStr20,
+oracle: ByStr20,
+redC: ByStr20,
+developer: ByStr20,
+holdersReward: ByStr20)
+                          
+field playerBets: Map ByStr20 (Map String String) (* Address => GameID => BetID*)
+                = Emp ByStr20 (Map String String)
+field games: Map String GameData (* GameID => GameData*)
+                = Emp String GameData
+field gameStatus: Map String Uint32 (* GameID => Status*)
+                = Emp String Uint32
+field results: Map String Result (* GameID => Result*)
+                = Emp String Result
+field bets: Map String Bet (* BetID => Bet*)
+                = Emp String Bet
+field betStatus: Map String Uint32 (* BetID => Status*)
+                = Emp String Uint32
+field totalWinPoolBet: Map String Uint32 (* GameID => Count*)
+                = Emp String Uint32
+field totalLoosePoolBet: Map String Uint32 (* GameID => Count*)
+                = Emp String Uint32
+field totalDrawPoolBet: Map String Uint32 (* GameID => Count*)
+                = Emp String Uint32
+field totalWinPoolBetAmount: Map String Uint128 (* GameID => Amount*)
+                = Emp String Uint128
+field totalLoosePoolBetAmount: Map String Uint128 (* GameID => Amount*)
+                = Emp String Uint128
+field totalDrawPoolBetAmount: Map String Uint128 (* GameID => Amount*)
+                = Emp String Uint128
+field totalDistributePool: Map String Uint128 (* GameID => Amount*)
+                = Emp String Uint128
+field totalPool: Map String Uint128 (* GameID => Amount*)
+                = Emp String Uint128
+field userHostedGamesCount: Map ByStr20 Uint32 (* Address => TotalGamesHosted*)
+                = Emp ByStr20 Uint32
+                
+field oracleAddress : ByStr20 = oracle
+field minimumBet: Uint128 = Uint128 20000000000000
+field developerAddress: ByStr20 = developer
+field holdersRewardAddress: ByStr20 = holdersReward
+
+field redCDefaultCharge : Uint128 = Uint128 100000000
+field redCCustomCharge : Uint128 = Uint128 1000000000
+
+(*Error Handling*)
+procedure ThrowError(err : Error)
+  e = make_error err;
+  throw e
+end
+
+(*External contract calls*)
+procedure depositRedC(redCAmount: Uint128)
+  msg_to_token =  {
+    _tag : "TransferFrom";
+    _recipient: redC;
+    _amount: uint128_zero;
+    from: _sender;
+    to: treasury;
+    amount: redCAmount
+  };
+  msgs = one_msg msg_to_token;
+  send msgs
+end
+
+procedure depositZilToTreasury()
+  accept;
+  msg = {_tag: "depositFund"; 
+        _recipient: treasury; 
+        _amount: _amount};
+  msgs = one_msg msg;
+  send msgs
+end
+
+procedure callForTreasury(redeem: Uint128, receiver: ByStr20)
+  isAmountZero = builtin eq redeem uint128_zero;
+  match isAmountZero with
+    | True =>
+    | False =>
+      msg = {_tag: "withdrawFund"; 
+              _recipient: treasury; 
+              _amount: _amount;
+              address: receiver;
+              amount: redeem
+      };
+      msgs = one_msg msg;
+      send msgs
+    end
+end
+
+(*Access Control*)
+procedure checkAccess(role: ByStr20)
+  hasAcess = builtin eq role _sender;
+  match hasAcess with
+    | True => (*ok*)
+    | False =>
+      err = CodeUnauthorized;
+      ThrowError err
+  end
+end
+
+procedure isHost(gameID: String)
+  gameForBet <- games[gameID];
+  host = hostOfGame gameForBet;
+  checkAccess host
+end
+
+procedure isNotHost(gameID: String)
+  gameForBet <- games[gameID];
+  host = hostOfGame gameForBet;
+  hasAcess = builtin eq host _sender;
+  match hasAcess with
+    | True =>
+      err = CodeUnauthorized;
+      ThrowError err
+    | False => (*ok*)
+  end
+end
+
+procedure isOracle()
+  temp_oracleAddress <- oracleAddress;
+  checkAccess temp_oracleAddress
+end
+
+procedure isOwner()
+  checkAccess owner
+end
+
+(*Game Validation*)
+procedure isNewGame(gameID: String)
+  check_game <- games[gameID];
+  match check_game with
+    | Some v =>
+      err = CodeGameAlreadyExists;
+      ThrowError err
+    | None => (*ok*)
+  end
+end
+
+procedure isValidGame(gameID: String)
+  check_game <- games[gameID];
+  match check_game with
+    | Some v => (*ok*)
+    | None =>
+      err = CodeGameNotAvailable;
+      ThrowError err
+  end
+end
+
+procedure isBetLow()
+  temp_minBet <- minimumBet;
+  isBetLow = checkMinimumBet temp_minBet _amount;
+  match isBetLow with
+    | True =>
+      err = CodeBetAmountInsufficient;
+      ThrowError err
+    | False => (*ok*)
+  end
+end
+
+procedure hasPlayerBetted(gameID: String)
+   hasPlayerBetted <- playerBets[_sender][gameID];
+    match hasPlayerBetted with
+      | Some v =>
+        err = CodeAlreadyBetted;
+        ThrowError err
+      | None => (*ok*)
+    end
+end
+
+procedure isNewBet(betID: String)
+  check_bet <- bets[betID];
+  match check_bet with
+    | Some v =>
+      err = CodeBetAlreadyExists;
+      ThrowError err
+    | None => (*ok*)
+  end
+end
+
+procedure isOpenForBet(gameID: String)
+  tempGamesForResponse <- gameStatus[gameID];
+  is_open_for_bet =  checkStatus tempGamesForResponse uint32_zero;
+  match is_open_for_bet with
+    | True => (*ok*)
+    | False =>
+      err = CodeIsNotOpenForBet;
+      ThrowError err
+  end
+end
+
+procedure isStarted(gameID: String)
+  tempGamesForResponse <- gameStatus[gameID];
+  is_started =  checkStatus tempGamesForResponse uint32_one;
+  match is_started with
+    | True => (*ok*)
+    | False =>
+      err = CodeGameNotStarted;
+      ThrowError err
+  end
+end
+
+procedure isCompleted(gameID: String)
+  tempGamesForResponse <- gameStatus[gameID];
+  is_completed =  checkStatus tempGamesForResponse uint32_two;
+  match is_completed with
+    | True => (*ok*)
+    | False =>
+      err = CodeGameNotStarted;
+      ThrowError err
+  end
+end
+
+procedure isVerified(gameID: String)
+  tempGamesForResponse <- gameStatus[gameID];
+  is_verified =  checkStatus tempGamesForResponse uint32_three;
+  match is_verified with
+    | True => (*ok*)
+    | False =>
+      err = CodeGameNotVerified;
+      ThrowError err
+  end
+end
+
+procedure isAborted(gameID: String)
+  tempGamesForResponse <- gameStatus[gameID];
+  is_aborted =  checkStatus tempGamesForResponse uint32_four;
+  match is_aborted with
+    | True => (*ok*)
+    | False =>
+      err = CodeGameNotAborted;
+      ThrowError err
+  end
+end
+
+procedure isNotCompleted(gameID: String)
+  temp_status <- gameStatus[gameID];
+  can_be_aborted = checkIfNotCompleted temp_status;
+  match can_be_aborted with
+    | True => (*ok*)
+    | False =>
+      err = CodeGameAlreadyCompleted;
+      ThrowError err
+  end
+end
+
+procedure isResultAvailable(gameID: String)
+  temp_result <- results[gameID];
+  match temp_result with
+    | Some v => (*ok*)
+    | None =>   
+      err = CodeResultNotAvailable;
+      ThrowError err
+    end
+end
+
+procedure isNotRedeemed(betID: String)
+  status <- betStatus[betID];
+  isRedeemed = checkStatus status uint32_one;
+  match isRedeemed with
+    | True =>
+      err = CodeBetAlreadyRedemeed;
+      ThrowError err
+    | False => (*ok*)
+  end
+end
+
+(*Utils*)
+procedure createNewGame(gameID: String, gameData: GameData)
+    games[gameID] := gameData;
+    gameStatus[gameID] := uint32_zero;
+    
+    e = {_eventname : "GameCreated"; host : _sender; gameID: gameID};
+    event e
+end
+
+procedure createBet(betID: String, gameID: String, bet: Bet)
+    hasPlayerBetted gameID;
+    
+    bets[betID] := bet;
+    playerBets[_sender][gameID] := betID;
+    betStatus[betID] := uint32_zero;
+    
+    e = {_eventname : "BetPlaced"; sender : _sender; gameID: gameID; amount: _amount};
+    event e
+end
+
+procedure placeBet(gameID: String, betID: String, betSelected: Uint32)
+  new_bet = Bet gameID _sender betSelected _amount;
+  createBet betID gameID new_bet
+end
+
+procedure updatePool(gameID: String, betSelected: Uint32)
+    is_Win = builtin eq betSelected uint32_zero;
+    match is_Win with
+      | True =>
+        recentWinPoolBets <- totalWinPoolBet[gameID];
+        increaseTotalPoolBets = addTotalPoolBet recentWinPoolBets;
+        totalWinPoolBet[gameID] := increaseTotalPoolBets;
+        
+        recentWinPoolBetsAmount <- totalWinPoolBetAmount[gameID];
+        increaseTotalPoolBetAmount = addTotalPoolBetAmount recentWinPoolBetsAmount _amount;
+        totalWinPoolBetAmount[gameID] := increaseTotalPoolBetAmount
+      | False =>
+        is_Loose = builtin eq betSelected uint32_one;
+        match is_Loose with
+          | True =>
+            recentLoosePoolBets <- totalLoosePoolBet[gameID];
+            increaseTotalPoolBets = addTotalPoolBet recentLoosePoolBets;
+            totalLoosePoolBet[gameID] := increaseTotalPoolBets;
+            
+            recentLoosePoolBetsAmount <- totalLoosePoolBetAmount[gameID];
+            increaseTotalPoolBetAmount = addTotalPoolBetAmount recentLoosePoolBetsAmount _amount;
+            totalLoosePoolBetAmount[gameID] := increaseTotalPoolBetAmount
+          | False =>
+            is_Draw = builtin eq betSelected uint32_two;
+            match is_Draw with
+              | True =>
+                recentDrawPoolBets <- totalDrawPoolBet[gameID];
+                increaseTotalPoolBets = addTotalPoolBet recentDrawPoolBets;
+                totalDrawPoolBet[gameID] := increaseTotalPoolBets;
+                
+                recentDrawPoolBetsAmount <- totalDrawPoolBetAmount[gameID];
+                increaseTotalPoolBetAmount = addTotalPoolBetAmount recentDrawPoolBetsAmount _amount;
+                totalDrawPoolBetAmount[gameID] := increaseTotalPoolBetAmount
+              | False =>
+                err = CodeInvalidWinner;
+                ThrowError err
+            end
+        end
+    end
+  end
+  
+procedure flashResult(gameID: String, finalScore: String, winner: Uint32)
+  new_result = Result finalScore winner;
+  results[gameID] := new_result;
+  
+  e = {_eventname : "ResultFlashed"; gameID: gameID; finalScore: finalScore; winner: winner};
+  event e
+end
+
+procedure setTotalPool(gameID: String, totalAmount: Uint128)
+  percentage = Uint128 80;
+  total = Uint128 100;
+  totalPoolAmount = builtin mul percentage totalAmount;
+  totalPoolFraction = builtin div totalPoolAmount total;
+  
+  totalDistributePool[gameID] := totalPoolFraction
+end
+
+procedure recordPool(gameID: String, temp_totalPool: Uint128, temp_totalPoolBetAmount: Option Uint128)
+  tempDistributePercentage = distributePercentage temp_totalPool;
+  totalDistributePool[gameID] := tempDistributePercentage;
+  tempTotalPool = getAmount temp_totalPoolBetAmount;
+  totalPool[gameID] := tempTotalPool
+end
+
+procedure buildPool(gameID: String, winner: Uint32)
+  temp_totalWinPoolBetAmount <- totalWinPoolBetAmount[gameID];
+  temp_totalLoosePoolBetAmount <- totalLoosePoolBetAmount[gameID];
+  temp_totalDrawPoolBetAmount <- totalDrawPoolBetAmount[gameID];
+  
+  is_Win = builtin eq winner uint32_zero;
+  match is_Win with
+    | True =>
+      temp_totalWinPool = calculatePool temp_totalLoosePoolBetAmount temp_totalDrawPoolBetAmount;
+      recordPool gameID temp_totalWinPool temp_totalWinPoolBetAmount
+    | False =>
+      is_Loose = builtin eq winner uint32_one;
+      match is_Loose with
+        | True =>
+          temp_totalLoosePool = calculatePool temp_totalWinPoolBetAmount temp_totalDrawPoolBetAmount;
+          recordPool gameID temp_totalLoosePool temp_totalLoosePoolBetAmount
+        | False =>
+          is_Draw = builtin eq winner uint32_two;
+          match is_Draw with
+            | True =>
+              temp_totalDrawPool = calculatePool temp_totalWinPoolBetAmount temp_totalLoosePoolBetAmount;
+              recordPool gameID temp_totalDrawPool temp_totalDrawPoolBetAmount
+            | False =>
+              err = CodeInvalidWinner;
+              ThrowError err
+          end
+      end
+    end
+end
+
+procedure calculateRedeemFund(gameId: String, amount: Uint128)
+  temp_totalPool <- totalPool[gameId];
+  temp_totalDistributePool <- totalDistributePool[gameId];
+  
+  total_redeem = calculateRedeemFund temp_totalPool temp_totalDistributePool amount;
+  callForTreasury total_redeem  _sender
+end
+
+procedure reduceUserHostedGamesCount(gameID: String)
+  tempGame <- games[gameID];
+  host = hostOfGame tempGame;
+  temp_userHostedGamesCount <- userHostedGamesCount[host];
+  
+  deduct_userHostedGamesCount = decreaseUserHostedGamesCount temp_userHostedGamesCount;
+  userHostedGamesCount[host] :=  deduct_userHostedGamesCount
+end
+
+procedure redeemHostDeveloperAndHolders(gameID: String)
+  tempGame <- games[gameID];
+  
+  host = hostOfGame tempGame;
+  temp_totalDistributePool <- totalDistributePool[gameID];
+  match temp_totalDistributePool with
+    | Some v2 =>
+      temp_10_percent_fraction = builtin div v2 uint128_eight;
+      callForTreasury temp_10_percent_fraction host;
+      temp_5_percent_fraction = builtin div temp_10_percent_fraction uint128_two;
+      temp_developerAddress <- developerAddress;
+      temp_holdersRewardAddress <- holdersRewardAddress;
+      callForTreasury temp_5_percent_fraction temp_developerAddress;
+      callForTreasury temp_5_percent_fraction temp_holdersRewardAddress
+    | None =>
+      err = CodePoolUnavailable;
+      ThrowError err
+  end
+end
+
+procedure rewardBet(betID: String)
+  playerBet <- bets[betID];
+  match playerBet with
+    | Some v =>
+      match v with
+      | Bet gameId playerAddress betSelected amount =>
+        callForTreasury amount _sender
+      end
+    | None =>
+      err = CodeBetNotAvailable;
+      ThrowError err
+  end
+end
+
+procedure rewardWinner(gameID: String, betID: String, temp_winner: Uint32)
+  playerBet <- bets[betID];
+  match playerBet with
+    | Some v =>
+      match v with
+      | Bet gameId playerAddress betSelected amount =>
+        isWinner = builtin eq betSelected temp_winner;
+        match isWinner with
+          | True =>
+            betStatus[betID] := uint32_one;
+            calculateRedeemFund gameID amount
+          | False =>
+            err = CodeNotWinner;
+            ThrowError err
+        end
+      end
+    | None =>
+      err = CodeBetNotAvailable;
+      ThrowError err
+  end
+end
+
+transition createGame(gameID: String, homeTeam: String, awayTeam: String, startingOn: String)
+  isNewGame gameID;
+  
+  temp_userHostedGamesCount <- userHostedGamesCount[_sender];
+  temp_redCDefaultCharge <- redCDefaultCharge;
+  temp_redCCustomCharge <- redCCustomCharge;
+  
+  redCAmount = redCCharge temp_userHostedGamesCount temp_redCDefaultCharge temp_redCCustomCharge;
+  new_game = GameData homeTeam awayTeam startingOn _sender redCAmount;
+  createNewGame gameID new_game;
+  
+  temp_increaseUserHostedGamesCount = increaseUserHostedGamesCount temp_userHostedGamesCount;
+  userHostedGamesCount[_sender] :=  temp_increaseUserHostedGamesCount;
+  
+  depositRedC redCAmount
+end
+
+transition bet(gameID: String, betID: String, betSelected: Uint32)
+  isNotHost gameID;
+  isBetLow;
+  isNewBet betID;
+  isOpenForBet gameID;
+  
+  updatePool gameID betSelected;
+  placeBet gameID betID betSelected;
+  
+  depositZilToTreasury
+end
+
+transition gameStarted(gameID: String)
+  isValidGame gameID;
+  isOracle;
+  isOpenForBet gameID;
+  
+  gameStatus[gameID] := uint32_one;
+  e = {_eventname : "GameStarted"; gameID: gameID};
+  event e
+end
+
+transition gameAborted(gameID: String)
+  isValidGame gameID;
+  isOracle;
+  isNotCompleted gameID;
+  
+  gameStatus[gameID] := uint32_four;
+  e = {_eventname : "GameAborted"; gameID: gameID};
+  event e
+end
+
+transition flashGameResults(gameID: String, finalScore: String, winner: Uint32)
+  isValidGame gameID;
+  isOracle;
+  isStarted gameID;
+  
+  gameStatus[gameID] := uint32_two;
+  flashResult gameID finalScore winner;
+  reduceUserHostedGamesCount gameID
+end
+
+transition verifyGameResults(gameID: String)
+  isValidGame gameID;
+  isOwner;
+  isCompleted gameID;
+  isResultAvailable gameID;
+  
+  temp_result <- results[gameID];
+  winner = winnerOfGame temp_result;
+  
+  gameStatus[gameID] := uint32_three;
+  buildPool gameID winner;
+  redeemHostDeveloperAndHolders gameID
+end
+
+transition redeem(gameID: String)
+  isValidGame gameID;
+  isResultAvailable gameID;
+  isVerified gameID;
+  gameResult <- results[gameID];
+  
+  temp_winner = winnerOfGame gameResult;
+  
+  betID <- playerBets[_sender][gameID];
+  match betID with
+    | Some v =>
+      isNotRedeemed v;
+      rewardWinner gameID v temp_winner
+    | None =>
+      err = CodeBetNotAvailable;
+      ThrowError err
+    end
+end
+
+transition withdrawFromAborted(gameID: String)
+  isValidGame gameID;
+  isAborted gameID;
+  
+  betID <- playerBets[_sender][gameID];
+  match betID with
+    | Some v =>
+      isNotRedeemed v;
+      betStatus[v] := uint32_one;
+      
+      rewardBet v
+    | None =>
+      err = CodeBetNotAvailable;
+      ThrowError err
+  end
+end
+
+transition updateOracle(address: ByStr20)
+  isOwner;
+  
+  oracleAddress := address;
+  e = {_eventname : "OracleUpdated"; sender : _sender};
+  event e
+end
+
+transition updateDeveloperWallet(address: ByStr20)
+  isOwner;
+  
+  developerAddress := address;
+  e = {_eventname : "DeveloperWalletUpdated"; sender : _sender};
+  event e
+end
+
+transition updateHoldersRewardWallet(address: ByStr20)
+  isOwner;
+  
+  holdersRewardAddress := address;
+  e = {_eventname : "HoldersRewardWalletUpdated"; sender : _sender};
+  event e
+end
+
+transition minimumBet(amount: Uint128)
+  isOwner;
+  
+  minimumBet := amount;
+  e = {_eventname : "MinimumBetUpdated"; sender : _sender};
+  event e
+end
+
+transition redCChargeUpdate(defaultCharge: Uint128, customCharge: Uint128)
+  isOwner;
+  
+  redCDefaultCharge := defaultCharge;
+  redCCustomCharge := customCharge;
+  e = {_eventname : "REDCChargeUpdated"; sender : _sender};
+  event e
+end
+
+transition RecipientAcceptTransferFrom(
+  initiator : ByStr20,
+  sender : ByStr20,
+  recipient : ByStr20,
+  amount : Uint128
+)
+end
+
+transition TransferFromSuccessCallBack(
+  initiator : ByStr20,
+  sender : ByStr20,
+  recipient : ByStr20,
+  amount : Uint128
+)
+end
+
+transition TransferSuccessCallBack(
+  sender : ByStr20,
+  recipient : ByStr20,
+  amount : Uint128
+)
+end

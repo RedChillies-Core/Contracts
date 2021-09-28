@@ -3,9 +3,10 @@
 A Gaming platform in Zilliqa Blockchain
 ## Content
 
-- BetGame Smart Contract
 - Treasury Smart Contract
+- FootballPredictionGame Smart Contract
 - CricketPredictionGame Smart Contract
+- BasketballPredictionGame Smart Contract
 
 ## Instruction
 - Open [Neo Savant IDE](https://ide.zilliqa.com) in your web browser.

@@ -1,0 +1,1207 @@
+scilla_version 0
+
+import BoolUtils IntUtils ListUtils
+
+library Chess
+
+(* RoomPlayers = Player1 Player2 *)
+type RoomPlayers = | RoomPlayers of ByStr20 ByStr20
+(* GameEndInfo = GameStatus, Result, EndCode, GameHistory, TimeStamp *)
+type GameEndInfo = | GameEndInfo of Uint32 Uint32 String String BNum
+
+let empty_gameID = 0x0000000000000000000000000000000000000000000000000000000000000000
+let none_address = 0x0000000000000000000000000000000000000000
+
+let white = "W"
+let black = "B"
+
+(* is_playing = True, is_Not_PLaying = False *)
+let bool_true = True
+let bool_false = False
+
+let insuffMoves = "InsuffMoves"
+
+(*Room codes*)
+let board1 = "B1"
+let board2 = "B2"
+let board3 = "B3"
+let board4 = "B4"
+let board5 = "B5"
+let board6 = "B6"
+
+(* aborted = 0, waiting = , started = 2, ended = 3 *)
+(* lose = 0, draw = 1, win = 2, null = 3 *)
+(* fake = 0, genuine = 1, dispute = 2 *)
+
+let uint32_zero = Uint32 0
+let uint32_one = Uint32 1
+let uint32_two = Uint32 2
+let uint32_three = Uint32 3
+let uint32_four = Uint32 4
+let uint32_five = Uint32 5
+
+let uint128_zero = Uint128 0
+let uint128_two = Uint128 2
+let uint128_five = Uint128 5
+let uint128_decimal_redc = Uint128 1000000000
+let uint128_ten = Uint128 10
+let uint128_twenty = Uint128 20
+let uint128_eighty = Uint128 80
+let uint128_hundred = Uint128 100
+let div_const = Uint128 20000000000000000
+
+let result_not_available = Uint32 10
+let not_available = "Not available"
+let timeStamp_not_available = BNum 0
+
+let rmvOptionFromGameID =
+  fun (optGameID: Option ByStr32) =>
+    match optGameID with
+      | Some v => v
+      | None => empty_gameID
+    end
+
+let rmvOptionFromBoardID =
+  fun (optBoardID: Option String) =>
+    match optBoardID with
+      | Some v => v
+      | None => ""
+    end
+
+let rmvOptionFromPlayerID =
+  fun (optPlayerID: Option ByStr20) =>
+    match optPlayerID with
+      | Some v => v
+      | None => none_address
+    end
+
+let rmvOptionFromIsPlaying =
+  fun (optIsPlaying: Option Bool) =>
+    match optIsPlaying with
+      | Some v => v
+      | None => False
+    end
+
+let rmvOptionFromBNum =
+  fun (option_value: Option BNum) =>
+    match option_value with
+      | Some v => v
+      | None => timeStamp_not_available
+    end
+
+let opponentResult =
+  fun (result: Uint32) =>
+    let is_win = builtin eq result uint32_two in
+    let is_lose = builtin eq result uint32_zero in
+    let is_draw = builtin eq result uint32_one in
+    match is_win with
+      | True => uint32_zero
+      | False => (*do nothing*)
+        match is_lose with
+          | True => uint32_two
+          | False => (*do nothing*)
+            match is_draw with
+              | True => uint32_one
+              | False => uint32_three
+            end
+        end
+    end
+
+let invertColor =
+  fun (color: String) =>
+    let is_white = builtin eq color white in
+    match is_white with
+      | True => black
+      | False => white
+    end
+
+let one_msg = 
+  fun (msg : Message) =>
+  let nil_msg = Nil {Message} in
+  Cons {Message} msg nil_msg
+    
+let getValueUint32 =
+  fun (amount: Option Uint32) =>
+    match amount with
+      | Some x => x
+      | None => uint32_zero
+end
+
+let getValueUint128 =
+  fun (amount: Option Uint128) =>
+    match amount with
+      | Some x => x
+      | None => uint128_zero
+end
+
+let get_distribution_amount =
+  fun(amount: Uint128) =>
+    let prd = builtin mul uint128_eighty amount in
+    builtin div prd uint128_hundred
+ 
+(* 0.025% so 5/(2*10^4) *)
+(* fee = 20*10^12 so need to remove 10^6 to get redc amount *)
+let host_fee = 
+  fun(joiningFee: Uint128) =>
+    let temp_points = builtin mul uint128_two joiningFee in
+    let points = builtin mul temp_points uint128_ten in
+    let temnp_ampount_1 = builtin mul points uint128_decimal_redc in
+    let temp_amount_2 = builtin mul temnp_ampount_1 uint128_five in
+    let amount = builtin div temp_amount_2 div_const in
+    amount
+
+let getPlayer1 = 
+  fun(room_players: Option RoomPlayers) =>
+  match room_players with
+    | Some v =>
+      match v with
+        | RoomPlayers player1 _ =>
+          player1
+      end
+    | None =>
+        none_address
+  end
+  
+let getPlayer2 = 
+  fun(room_players: Option RoomPlayers) =>
+  match room_players with
+    | Some v =>
+      match v with
+        | RoomPlayers _ player2 =>
+          player2
+      end
+    | None =>
+        none_address
+  end
+  
+let getPlayerCount =
+  fun(room_players: Option RoomPlayers) =>
+    let player1 = getPlayer1 room_players in
+    let player2 = getPlayer2 room_players in
+    let is_player1_invalid = builtin eq player1 none_address in
+    let is_player2_invalid = builtin eq player2 none_address in
+    match is_player1_invalid with
+      | True => 
+        match is_player2_invalid with
+          | True => uint32_zero
+          | False => uint32_one
+        end
+      | False =>
+        match is_player2_invalid with
+          | True => uint32_one
+          | False => uint32_two
+        end
+    end
+
+let playerExists =
+  fun(room_players: Option RoomPlayers) =>
+  fun(sender: ByStr20) =>
+    let player1 = getPlayer1 room_players in
+    let is_equal = builtin eq player1 sender in
+    match is_equal with
+      | True => bool_true
+      | False => bool_false
+    end
+
+let get_game_status =
+  fun(gameInfo: Option GameEndInfo) =>
+    match gameInfo with
+      | Some v =>
+        match v with
+          | GameEndInfo gameStatus _ _ _ _ =>
+            gameStatus
+        end
+      | None => uint32_zero
+    end
+
+let get_game_timestamp =
+  fun(gameInfo: Option GameEndInfo) =>
+    match gameInfo with
+      | Some v =>
+        match v with
+          | GameEndInfo _ _ _ _ gameTimeStamp =>
+            gameTimeStamp
+        end
+      | None => timeStamp_not_available
+    end
+
+let get_game_result =
+  fun(gameInfo: Option GameEndInfo) =>
+    match gameInfo with
+      | Some v =>
+        match v with
+          | GameEndInfo _ gameResult _ _ _ =>
+            gameResult
+        end
+      | None => uint32_zero
+    end
+
+type Error =
+| CodeUnauthorized
+| CodeRoomAlreadyExists
+| CodePlayerAlreadyExists
+| CodeRoomFull
+| CodeRoomDoesnotExist
+| CodeDisputeNotTimeExceeded
+| CodeRoomNotOpenOrAlreadyFull
+| CodeRoomNotStarted
+| CodeRoomNotEnded
+| CodeNothingToRedeem
+| CodeAlreadyRedeemed
+| CodeIncorrectJoiningFee
+| CodeGameIdExists
+| CodeIsPlayingAnotherGame
+| CodeSeatTaken
+| CodeNotPlayerOrOwner
+| CodeGameStatusError
+| CodeGameDoesNotExist
+| CodeGameNotOver
+| CodeCannotRedeem
+| CodeNotPlayer
+| CodeDisputeTimeExceeded
+| CodeDisputeStatusError
+| CodeInvalidBoardId
+let make_error =
+  fun (result : Error) =>
+    let result_code = 
+      match result with
+      | CodeUnauthorized              => Int32 -1
+      | CodeRoomAlreadyExists         => Int32 -2
+      | CodePlayerAlreadyExists       => Int32 -3
+      | CodeRoomFull                  => Int32 -4
+      | CodeRoomDoesnotExist          => Int32 -5
+      | CodeDisputeNotTimeExceeded    => Int32 -6
+      | CodeRoomNotOpenOrAlreadyFull  => Int32 -7
+      | CodeRoomNotStarted            => Int32 -8
+      | CodeRoomNotEnded              => Int32 -9
+      | CodeNothingToRedeem           => Int32 -10
+      | CodeAlreadyRedeemed           => Int32 -11
+      | CodeIncorrectJoiningFee       => Int32 -12
+      | CodeGameIdExists              => Int32 -13
+      | CodeIsPlayingAnotherGame      => Int32 -14
+      | CodeSeatTaken                 => Int32 -15
+      | CodeNotPlayerOrOwner          => Int32 -16
+      | CodeGameStatusError           => Int32 -17
+      | CodeGameDoesNotExist          => Int32 -18
+      | CodeGameNotOver               => Int32 -19
+      | CodeCannotRedeem              => Int32 -20
+      | CodeNotPlayer                 => Int32 -21
+      | CodeDisputeTimeExceeded       => Int32 -22
+      | CodeDisputeStatusError        => Int32 -23
+      | CodeInvalidBoardId            => Int32 -24
+      end
+    in
+    { _exception : "Error"; code : result_code }
+
+contract ZilChess4
+(
+  owner : ByStr20,
+  oracle: ByStr20,
+  zchHolder: ByStr20,
+  zchTeam: ByStr20,
+  treasury: ByStr20,
+  token: ByStr20,
+  disputeBlockTime: Uint32
+)
+
+field roomList: Map String Uint128 = Emp String Uint128
+(* stores the bet Zil amount associated with a Room *)
+field roomPlayers: Map String RoomPlayers = Emp String RoomPlayers 
+(* stores the two player address that praticipated in a sroom *)
+field roomStatus: Map String Uint32 = Emp String Uint32 (* 0 = Created, 1 = OpenForBet, 2 = Game Started, 3 = Game Ended, 4 = Game Null, 5 = Game Aborted*)
+
+field redeemStatus: Map String (Map ByStr20 Bool) = Emp String (Map ByStr20 Bool) (* false = NotRedeemed, true = Redeemed*)
+field winAmount: Map String (Map ByStr20 Uint128) = Emp String (Map ByStr20 Uint128)
+(* stores  roomID -> player_id (address) -> zil amount won *)
+
+field oracleAddress: ByStr20 = oracle
+field zchHolderAddress: ByStr20 = zchHolder
+field zchTeamAddress: ByStr20 = zchTeam 
+field treasuryAddress: ByStr20 = treasury
+field blockDisputeTime : Uint32 = disputeBlockTime
+field rewardDisputeTime: Map String BNum = Emp String BNum
+
+field chessGameGame: Map ByStr32 ByStr32 = Emp ByStr32 ByStr32
+(* game_id_player1 -> game_id_player2 and vice versa mapping *)
+field chessPlayerGame: Map ByStr32 ByStr20 = Emp ByStr32 ByStr20
+(*  game_id -> player_id *)
+field chessRoomGame: Map ByStr32 String = Emp ByStr32 String
+(*  game_id -> roomID  *)
+field chessColorGame: Map ByStr32 String = Emp ByStr32 String
+(* game_id -> color, can be removed *)
+field gameEndInfo: Map ByStr32 GameEndInfo = Emp ByStr32 GameEndInfo
+field chessClassGame: Map ByStr32 Uint32 = Emp ByStr32 Uint32
+(* game-id -> game_validity_status fake = 0, genuine = 1, dispute = 2 *)
+field chessIsPlayingPlayer: Map ByStr20 Bool = Emp ByStr20 Bool
+field chessGameSeat: Map String (Map String ByStr32) = Emp String (Map String ByStr32)
+(* room_id -> color -> game_id *)
+
+field boardOneFeeZIL: Uint128 = Uint128 20000000000000
+field boardTwoFeeZIL: Uint128 = Uint128 50000000000000
+field boardThreeFeeZIL: Uint128 = Uint128 100000000000000
+field boardFourFeeZIL: Uint128 = Uint128 200000000000000
+field boardFiveFeeZIL: Uint128 = Uint128 500000000000000
+field boardSixFeeZIL: Uint128 = Uint128 1000000000000000
+
+procedure ThrowError(err : Error)
+  e = make_error err;
+  throw e
+end
+
+procedure isOwner()
+  is_owner = builtin eq _sender owner;
+  match is_owner with
+    | True =>
+    | False =>
+      err = CodeUnauthorized;
+      ThrowError err
+  end
+end
+
+procedure sendToken(tokenAmount: Uint128)
+  treasury_address <- treasuryAddress;
+  msg_to_token = {
+    _tag : "TransferFrom";
+    _recipient: token;
+    _amount : uint128_zero;
+    from: _sender;
+    to: treasury_address;
+    amount: tokenAmount
+  };
+  msgs = one_msg msg_to_token;
+  send msgs
+end
+
+procedure payHostFee(joiningFee: Uint128)
+    token_amount = host_fee joiningFee;
+    sendToken token_amount
+end
+
+procedure payFee(joiningFee: Uint128)
+    accept;
+    treasury_address <- treasuryAddress;
+    msg = {_tag: "depositFund"; 
+              _recipient: treasury_address; 
+              _amount: joiningFee};
+    msgs = one_msg msg;
+    send msgs
+end
+
+procedure updateGameStatus
+(
+  gameID: ByStr32, 
+  status: Uint32,
+  result: Uint32,
+  endcode: String,
+  history: String,
+  timeStamp: BNum
+)
+  new_game_status = GameEndInfo status result endcode history timeStamp;
+  gameEndInfo[gameID] := new_game_status
+end
+
+procedure procedureStartGame (gameID: ByStr32, gameID_opponent: ByStr32, player_id: ByStr20, opponent_id: ByStr20)
+  updateGameStatus gameID uint32_two result_not_available not_available not_available timeStamp_not_available;
+  updateGameStatus gameID_opponent uint32_two result_not_available not_available not_available timeStamp_not_available;
+
+  chessGameGame[gameID] := gameID_opponent;
+  chessGameGame[gameID_opponent] := gameID;
+  chessIsPlayingPlayer[player_id] := bool_true;
+  chessIsPlayingPlayer[opponent_id] := bool_true
+      
+end
+
+procedure addPlayer
+  (
+    roomID: String, 
+    joiningFee: Uint128, 
+    color: String,
+    gameID: ByStr32
+  )
+
+    opt_room_players <- roomPlayers[roomID];
+    room_length = getPlayerCount opt_room_players;
+    is_full = builtin eq room_length uint32_two;
+    match is_full with 
+    | True =>
+      err = CodeRoomFull;
+      ThrowError err
+    | False =>
+    end;
+
+    has_player = playerExists opt_room_players _sender;
+    match has_player with
+    | True  =>
+      err = CodePlayerAlreadyExists;
+      ThrowError err
+    | False =>
+    end;
+
+    game_is_registered <- exists chessPlayerGame[gameID];
+    match game_is_registered with
+      | True => 
+        err = CodeGameIdExists;
+        ThrowError err
+      | False => 
+    end;
+
+    is_chessIsPlayingPlayer_not_empty <- exists chessIsPlayingPlayer[_sender];
+    match is_chessIsPlayingPlayer_not_empty with
+      | True =>
+        opt_is_playing_another_game <- chessIsPlayingPlayer[_sender];
+        is_playing_another_game = rmvOptionFromIsPlaying opt_is_playing_another_game;
+        match is_playing_another_game with
+          | True => 
+            err = CodeIsPlayingAnotherGame;
+            ThrowError err
+          | False => 
+        end
+      | False =>
+        chessIsPlayingPlayer[_sender] := bool_false
+    end;
+
+    is_seat_occupied <- exists chessGameSeat[roomID][color];
+    match is_seat_occupied with
+      | True => 
+        err = CodeSeatTaken;
+        ThrowError err
+      | False =>
+    end;
+
+    chessGameSeat[roomID][color] := gameID;
+    chessPlayerGame[gameID] := _sender;
+    chessRoomGame[gameID] := roomID;
+    chessColorGame[gameID] := color;
+    
+    updateGameStatus gameID uint32_one result_not_available not_available not_available timeStamp_not_available;
+
+    color_opponent = invertColor color;
+    opponent_exists <- exists chessGameSeat[roomID][color_opponent];
+  
+    payFee joiningFee;
+
+    match opponent_exists with
+    | True =>
+      opt_gameID_opponent <- chessGameSeat[roomID][color_opponent];
+      gameID_opponent = rmvOptionFromGameID opt_gameID_opponent;
+      opt_player_id_opponent <- chessPlayerGame[gameID_opponent];
+      player_id_opponent = rmvOptionFromPlayerID opt_player_id_opponent;   
+      updated_players = RoomPlayers _sender player_id_opponent;
+      roomPlayers[roomID] := updated_players;
+      
+      procedureStartGame gameID gameID_opponent _sender player_id_opponent;
+
+      e = { _eventname: "Player joined and game started";
+      roomID: roomID;
+      gameID: gameID;
+      gameIDOpponent: gameID_opponent;
+      playerID: _sender;
+      playerIDOpponent: player_id_opponent};
+      event e
+
+    | False =>
+      updated_players = RoomPlayers _sender none_address;
+      roomPlayers[roomID] := updated_players;
+      e = { _eventname: "Player joined and waiting";
+            roomID: roomID;
+            gameID: gameID;
+            gameIDOpponent: empty_gameID;
+            playerID: _sender;
+            playerIDOpponent: none_address};
+      event e
+  end         
+end
+
+procedure initRoom(roomID: String)
+  new_room = RoomPlayers none_address none_address;
+  roomPlayers[roomID] := new_room;
+  roomStatus[roomID] := uint32_zero
+end
+
+procedure roomExists(roomID: String)
+  room_status <- exists roomList[roomID];
+  match room_status with
+    | True =>
+    | False =>
+      err = CodeRoomDoesnotExist;
+      ThrowError err
+  end
+end
+
+procedure isHost(host: ByStr20)
+  is_host = builtin eq host _sender;
+  match is_host with
+    | True =>
+    | False =>
+      err = CodeUnauthorized;
+      ThrowError err
+  end
+end
+
+procedure isOpen(roomID: String)
+  status <- roomStatus[roomID];
+  uint32_status = getValueUint32 status;
+  is_open = builtin eq uint32_status uint32_one;
+  match is_open with
+    | True =>
+    | False =>
+      err = CodeRoomNotOpenOrAlreadyFull;
+      ThrowError err
+  end
+end
+
+procedure isStarted (roomID: String)
+  opt_status <- roomStatus[roomID];
+  uint32_status = getValueUint32 opt_status;
+  is_started = builtin eq uint32_status uint32_two;
+  match is_started with
+    | False => 
+      err = CodeRoomNotStarted;
+      ThrowError err
+    | True => 
+  end
+end
+
+procedure ended(roomID: String)
+  status <- roomStatus[roomID];
+  uint32_status = getValueUint32 status;
+  is_ended = builtin eq uint32_status uint32_three;
+  match is_ended with
+    | True =>
+    | False =>
+      err = CodeRoomNotEnded;
+      ThrowError err
+  end
+end
+
+procedure notRedeemed(roomID: String, player: ByStr20)
+  redeem_status <- redeemStatus[roomID][player];
+  match redeem_status with
+    | Some v =>
+      match v with
+      | True =>
+        err = CodeAlreadyRedeemed;
+        ThrowError err
+      | False =>
+    end
+    | None =>
+      err = CodeNothingToRedeem;
+      ThrowError err
+  end
+end
+
+procedure correctJoiningFee(correctFee: Uint128)
+is_correct = uint128_eq _amount correctFee;
+match is_correct with
+  | True =>
+  | False =>
+    err = CodeIncorrectJoiningFee;
+    ThrowError err
+end
+end
+
+procedure callForTreasury(redeem: Uint128, receiver: ByStr20)
+  isAmountZero = builtin eq redeem uint128_zero;
+  treasury_address <- treasuryAddress;
+  match isAmountZero with
+    | True =>
+    | False =>
+      msg = {_tag: "withdrawFund"; 
+              _recipient: treasury_address; 
+              _amount: uint128_zero;
+              address: receiver;
+              amount: redeem
+      };
+      msgs = one_msg msg;
+      send msgs
+    end
+end
+
+procedure setAmountForRedeem
+(
+  roomID: String, 
+  joiningFee: Uint128, 
+  gameID: ByStr32, 
+  result: Uint32
+)
+  
+  total_room_amount = builtin mul uint128_two joiningFee;
+  total_distribute_amount = get_distribution_amount total_room_amount;
+  amount_if_draw = builtin div total_distribute_amount uint128_two;
+  
+  opt_gameID_opponent <- chessGameGame[gameID];
+  gameID_opponent = rmvOptionFromGameID opt_gameID_opponent;
+
+  opt_player1_address <- chessPlayerGame[gameID];
+  player1_address = rmvOptionFromPlayerID opt_player1_address;
+
+  opt_player2_address <- chessPlayerGame[gameID_opponent];
+  player2_address = rmvOptionFromPlayerID opt_player2_address;
+
+  blk <- & BLOCKNUMBER;
+  dispute_time <- blockDisputeTime;
+  new_block = builtin badd blk dispute_time;
+  rewardDisputeTime[roomID] := new_block;
+
+  did_player1_win = builtin eq result uint32_two;
+  did_player1_draw = builtin eq result uint32_one;
+  match did_player1_win with
+  | True =>
+    winAmount[roomID][player1_address] := total_distribute_amount;
+    redeemStatus[roomID][player1_address]:= bool_false 
+  | False =>
+    match did_player1_draw with
+    | True => 
+      winAmount[roomID][player1_address] := amount_if_draw;
+      redeemStatus[roomID][player1_address]:= bool_false; 
+
+      winAmount[roomID][player2_address] := amount_if_draw;
+      redeemStatus[roomID][player2_address]:= bool_false 
+    | False =>
+      winAmount[roomID][player2_address] := total_distribute_amount;
+      redeemStatus[roomID][player2_address]:= bool_false 
+    end
+  end
+end
+
+procedure redeemHostAndAdmin(roomID: String, joiningFee: Uint128, host: ByStr20)
+
+  room_distribute_amount = builtin mul joiningFee uint128_two;
+
+  host_amount = builtin div room_distribute_amount uint128_twenty;
+  oracle_wallet <- oracleAddress;
+  zchHolder_wallet <- zchHolderAddress; 
+  zchTeam_wallet <- zchTeamAddress;   
+  callForTreasury host_amount host;
+  callForTreasury host_amount oracle_wallet;
+  callForTreasury host_amount zchHolder_wallet;
+  callForTreasury host_amount zchTeam_wallet
+end
+
+procedure endGame(gameID: ByStr32, result: Uint32, end_code: String, game_history: String)
+  timestamp <- & BLOCKNUMBER;
+
+  updateGameStatus gameID uint32_three result end_code game_history timestamp;
+
+  opt_gameID_opponent <- chessGameGame[gameID];
+  gameID_opponent = rmvOptionFromGameID opt_gameID_opponent;
+  opponent_result = opponentResult result;
+
+  updateGameStatus gameID_opponent uint32_three opponent_result end_code game_history timestamp;
+
+  opt_player_id <- chessPlayerGame[gameID];
+  player_id = rmvOptionFromPlayerID opt_player_id;
+  chessIsPlayingPlayer[player_id] := bool_false;
+  opt_opponent_id <- chessPlayerGame[gameID_opponent];
+  opponent_id = rmvOptionFromPlayerID opt_opponent_id;
+  chessIsPlayingPlayer[opponent_id] := bool_false
+end
+
+procedure isPlayerOrOwner (player_id: ByStr20, caller_id: ByStr20)
+  is_player = builtin eq player_id caller_id;
+  match is_player with
+    | False =>
+      is_owner = builtin eq owner caller_id;
+      match is_owner with
+        | False => 
+          err = CodeNotPlayerOrOwner;
+          ThrowError err
+        | True => 
+      end
+    | True => 
+  end
+end
+
+procedure isPlayer (player_id: ByStr20, caller_id: ByStr20)
+  is_player = builtin eq player_id caller_id;
+  match is_player with
+    | False =>
+      err = CodeNotPlayer;
+      ThrowError err
+    | True => 
+  end
+end
+
+procedure isDisputeTimeExceeded (current_time: BNum, dispute_time: BNum)
+  is_less = builtin blt current_time dispute_time;
+  match is_less with
+    | False =>
+      err = CodeDisputeTimeExceeded;
+      ThrowError err
+    | True => 
+  end
+end
+
+procedure isDisputeTimeNotExceeded (current_time: BNum, dispute_time: BNum)
+  is_less = builtin blt current_time dispute_time;
+  match is_less with
+    | True =>
+      err = CodeDisputeNotTimeExceeded;
+      ThrowError err
+    | False => 
+  end
+end
+
+procedure isNotUnderDispute(game_status: Uint32)
+  is_equal = builtin eq game_status uint32_two;
+  match is_equal with
+  | True =>
+    err = CodeDisputeStatusError;
+    ThrowError err
+  | False => 
+  end
+end
+
+procedure isUnderDispute(game_status: Uint32)
+  is_equal = builtin eq game_status uint32_two;
+  match is_equal with
+  | False =>
+    err = CodeDisputeStatusError;
+    ThrowError err
+  | True => 
+  end
+end
+
+procedure nullGame(roomID: String, gameID: ByStr32, game_history: String)
+
+  opt_joining_fee <- roomList[roomID];
+  joining_fee = getValueUint128 opt_joining_fee;
+  timestamp <- & BLOCKNUMBER;
+
+  updateGameStatus gameID uint32_zero uint32_three insuffMoves game_history timestamp;
+
+  opt_gameID_opponent <- chessGameGame[gameID];
+  gameID_opponent = rmvOptionFromGameID opt_gameID_opponent;
+
+  updateGameStatus gameID_opponent uint32_zero uint32_three insuffMoves game_history timestamp;
+
+  opt_player_id <- chessPlayerGame[gameID];
+  player_id = rmvOptionFromPlayerID opt_player_id;
+  opt_opponent_id <- chessPlayerGame[gameID_opponent];
+  opponent_id = rmvOptionFromPlayerID opt_opponent_id;
+  chessIsPlayingPlayer[player_id] := bool_false;
+  chessIsPlayingPlayer[opponent_id] := bool_false; 
+
+  callForTreasury joining_fee player_id;
+  callForTreasury joining_fee opponent_id
+end
+
+procedure isJoined (status: Uint32)
+  is_joined = builtin eq status uint32_one;
+  match is_joined with
+    | False => 
+      err = CodeGameStatusError;
+      ThrowError err
+    | True => 
+  end
+end
+
+procedure procedureSetFakeGame(gameID: ByStr32)
+
+  opt_roomID <- chessRoomGame[gameID];
+  roomID = rmvOptionFromBoardID opt_roomID;
+  roomExists roomID;
+
+  opt_gameID_opponent <- chessGameGame[gameID];
+  gameID_opponent = rmvOptionFromGameID opt_gameID_opponent;
+  
+  chessClassGame[gameID] := uint32_zero;
+  chessClassGame[gameID_opponent] := uint32_zero
+
+end
+
+procedure unlockGame(gameID: ByStr32)
+  
+  opt_roomID <- chessRoomGame[gameID];
+  roomID = rmvOptionFromBoardID opt_roomID;
+  roomExists roomID;
+  opt_player_id <- chessPlayerGame[gameID];
+  player_id = rmvOptionFromPlayerID opt_player_id;
+  notRedeemed roomID player_id;
+  opt_game_status <- chessClassGame[gameID];
+  game_status = getValueUint32 opt_game_status;
+  isNotUnderDispute game_status;
+  blk <- & BLOCKNUMBER;
+  opt_dispute_time <- rewardDisputeTime[roomID];
+  dispute_time = rmvOptionFromBNum opt_dispute_time;
+  isDisputeTimeNotExceeded blk dispute_time;
+  opt_gameID_opponent <- chessGameGame[gameID];
+  gameID_opponent = rmvOptionFromGameID opt_gameID_opponent;
+  chessClassGame[gameID] := uint32_one;
+  chessClassGame[gameID_opponent] := uint32_one
+end
+
+procedure isOracle()
+  oracle_addr <- oracleAddress;
+  is_oracle = builtin eq oracle_addr _sender;
+  match is_oracle with
+    | True =>
+    | False =>
+      err = CodeUnauthorized;
+      ThrowError err
+  end
+end
+
+transition updateOracleWallet(address: ByStr20)
+  isOwner;
+  oracleAddress := address;
+  e = {_eventname : "OracleWalletUpdated"; sender : _sender};
+  event e
+end
+
+transition updateZCHHolderWallet(address: ByStr20)
+  isOwner;
+  zchHolderAddress := address;
+  e = {_eventname : "ZCHHolderWalletUpdated"; sender : _sender};
+  event e
+end
+
+transition updateZCHTeam(address: ByStr20)
+  isOwner;
+  zchTeamAddress := address;
+  e = {_eventname : "ZCHTeamUpdated"; sender : _sender};
+  event e
+end
+
+transition updateTreasury(address: ByStr20)
+  isOwner;
+  treasuryAddress := address;
+  e = {_eventname : "TreasuryUpdated"; sender : _sender};
+  event e
+end
+
+transition updateBlockDisputeTime(time: Uint32)
+  isOwner;
+  blockDisputeTime := time;
+  e = {_eventname : "DisputeTimeUpdated"; sender : _sender};
+  event e
+end
+
+procedure roomCreate(roomID: String)
+  already_exists <- exists roomList[roomID];
+  match already_exists with
+  | True =>
+      err = CodeRoomAlreadyExists;
+      ThrowError err
+  | False =>
+      boardOneFeeZIL_ <- boardOneFeeZIL;
+      boardTwoFeeZIL_ <- boardTwoFeeZIL;
+      boardThreeFeeZIL_ <- boardThreeFeeZIL;
+      boardFourFeeZIL_ <- boardFourFeeZIL;
+      boardFiveFeeZIL_ <- boardFiveFeeZIL;
+      boardSixFeeZIL_ <- boardSixFeeZIL;
+      board = builtin substr roomID uint32_zero uint32_two;
+      is_B1 = builtin eq board board1;
+      is_B2 = builtin eq board board2;
+      is_B3 = builtin eq board board3;
+      is_B4 = builtin eq board board4;
+      is_B5 = builtin eq board board5;
+      is_B6 = builtin eq board board6;
+      joining_fee = 
+      match is_B1 with
+          | True =>  boardOneFeeZIL_
+          | False =>
+          match is_B2 with
+          | True => boardTwoFeeZIL_
+          | False =>
+              match is_B3 with
+              | True => boardThreeFeeZIL_
+              | False =>
+                  match is_B4 with
+                  | True => boardFourFeeZIL_
+                  | False =>
+                      match is_B5 with
+                      | True => boardFiveFeeZIL_
+                      | False =>
+                          match is_B6 with
+                          | True => boardSixFeeZIL_
+                          | False => uint128_zero
+                          end
+                      end
+                  end
+              end
+          end
+      end;
+      is_zero = builtin eq joining_fee uint128_zero;
+      match is_zero with
+      | False =>
+      | True => 
+        err = CodeInvalidBoardId;
+        ThrowError err   
+      end;
+      payHostFee joining_fee;
+      initRoom roomID;
+      roomList[roomID] := joining_fee
+  end
+end
+
+procedure joinAndOpen(roomID: String, color: String, gameID: ByStr32)
+  opt_joining_fee <- roomList[roomID];
+  joining_fee = getValueUint128 opt_joining_fee;
+  correctJoiningFee joining_fee;
+  addPlayer roomID joining_fee color gameID;
+  roomStatus[roomID] := uint32_one
+end  
+
+transition createRoom(roomID: String, color: String, gameID: ByStr32)
+    roomCreate roomID;
+    joinAndOpen roomID color gameID
+end
+
+transition joinRoom(roomID: String, color: String, gameID: ByStr32)
+  roomExists roomID;
+  isOpen roomID;
+  opt_joining_fee <- roomList[roomID];
+  joining_fee = getValueUint128 opt_joining_fee;
+  correctJoiningFee joining_fee;
+  addPlayer roomID joining_fee color gameID;
+  roomStatus[roomID] := uint32_two
+end
+
+transition gameOver
+(
+  roomID: String,
+  gameID: ByStr32, 
+  result: Uint32, 
+  end_code: String, 
+  game_history: String
+)
+  roomExists roomID;
+  isOracle;
+  isStarted roomID;
+  opt_joining_fee <- roomList[roomID];
+  joining_fee = getValueUint128 opt_joining_fee;
+  opt_room_players <- roomPlayers[roomID];
+  host = getPlayer2 opt_room_players;
+  endGame gameID result end_code game_history;
+  setAmountForRedeem roomID joining_fee gameID result;
+  redeemHostAndAdmin roomID joining_fee host;
+  roomStatus[roomID] := uint32_three;
+  e = {_eventname: "Game Over"; roomID: roomID};
+  event e
+end
+
+transition gameNull(roomID: String, gameID: ByStr32, game_history: String)
+  roomExists roomID;
+  isOracle;
+  isStarted roomID;
+  nullGame roomID gameID game_history;
+  roomStatus[roomID] := uint32_four;
+  e = {_eventname: "Game Null"; roomID: roomID; gameID: gameID};
+  event e
+end
+
+transition abortGame(gameID: ByStr32)
+  opt_player_id <- chessPlayerGame[gameID];
+  player_id = rmvOptionFromPlayerID opt_player_id;
+  isPlayer player_id _sender;
+  
+  opt_game_end_info <- gameEndInfo[gameID];
+  game_status = get_game_status opt_game_end_info;
+  isJoined game_status;
+  
+  opt_roomID <- chessRoomGame[gameID];
+  roomID = rmvOptionFromBoardID opt_roomID;
+  roomExists roomID;
+  isOpen roomID;
+  opt_joining_fee <- roomList[roomID];
+  joining_fee = getValueUint128 opt_joining_fee;
+
+  callForTreasury joining_fee player_id;
+ 
+  updateGameStatus gameID uint32_zero result_not_available not_available not_available timeStamp_not_available;
+  chessIsPlayingPlayer[player_id] := bool_false;
+  
+  roomStatus[roomID] := uint32_five;
+  e = { _eventname: "aborted";
+        gameID: gameID;
+        gameIDOpponent: empty_gameID};
+  event e
+end
+
+transition changeResult(gameID: ByStr32, result: Uint32, end_code: String, game_history: String)
+  isOwner;
+  opt_roomID <- chessRoomGame[gameID];
+  roomID = rmvOptionFromBoardID opt_roomID;
+  roomExists roomID;
+
+  game_is_registered <- exists gameEndInfo[gameID];
+  match game_is_registered with
+    | True => (*do nothing*)
+    | False => 
+      err = CodeGameDoesNotExist;
+      ThrowError err
+  end;
+
+  opt_game_end_info <- gameEndInfo[gameID];
+  game_status = get_game_status opt_game_end_info;
+  is_game_ended = builtin eq game_status uint32_three;
+  match is_game_ended with
+    | True => 
+    | False => 
+      err = CodeGameNotOver;
+      ThrowError err
+  end; 
+  
+  opt_player_id <- chessPlayerGame[gameID];
+  player_id = rmvOptionFromPlayerID opt_player_id;
+  opt_gameID_opponent <- chessGameGame[gameID];
+  gameID_opponent = rmvOptionFromGameID opt_gameID_opponent;
+  opt_opponent_id <- chessPlayerGame[gameID_opponent];
+  opponent_id = rmvOptionFromPlayerID opt_opponent_id;
+
+  opt_game_status <- chessClassGame[gameID];
+  game_status = getValueUint32 opt_game_status;
+  isUnderDispute game_status;
+
+  opt_joining_fee <- roomList[roomID];
+  joining_fee = getValueUint128 opt_joining_fee;
+
+  total_room_amount = builtin mul uint128_two joining_fee;
+  total_distribute_amount = get_distribution_amount total_room_amount;
+  amount_if_draw = builtin div total_distribute_amount uint128_two;
+
+  game_timestamp = get_game_timestamp opt_game_end_info;
+  updateGameStatus gameID uint32_three result end_code game_history game_timestamp;
+  opponent_result = opponentResult result;
+  updateGameStatus gameID_opponent uint32_three opponent_result end_code game_history game_timestamp;
+  
+  amount1_exists <- exists winAmount[roomID][player_id];
+  match amount1_exists with
+    | True => 
+        delete winAmount[roomID][player_id]
+    | False => 
+  end;
+
+  amount2_exists <- exists winAmount[roomID][opponent_id];
+  match amount2_exists with
+    | True => 
+        delete winAmount[roomID][opponent_id]
+    | False => 
+  end;
+
+  did_player1_win = builtin eq result uint32_two;
+  did_player1_draw = builtin eq result uint32_one;
+  match did_player1_win with
+  | True =>
+    winAmount[roomID][player_id] := total_distribute_amount;
+    redeemStatus[roomID][player_id]:= bool_false 
+  | False =>
+    match did_player1_draw with
+    | True => 
+      winAmount[roomID][player_id] := amount_if_draw;
+      redeemStatus[roomID][player_id]:= bool_false; 
+
+      winAmount[roomID][opponent_id] := amount_if_draw;
+      redeemStatus[roomID][opponent_id]:= bool_false 
+    | False =>
+      winAmount[roomID][opponent_id] := total_distribute_amount;
+      redeemStatus[roomID][opponent_id]:= bool_false 
+    end
+  end;
+
+  chessClassGame[gameID] := uint32_one;
+  chessClassGame[gameID_opponent] := uint32_one;
+  e = { _eventname: "result changed";
+  gameID: gameID;
+  gameIDOpponent: gameID_opponent};
+  event e
+end
+
+transition setFakeGame(fake_game_list: List(ByStr32))
+  isOwner;
+  forall fake_game_list procedureSetFakeGame;
+  e = {_eventname: "Games set as fake"; fake_game_list: fake_game_list};
+  event e
+end
+
+transition disputeGameResult(gameID: ByStr32)
+  opt_roomID <- chessRoomGame[gameID];
+  roomID = rmvOptionFromBoardID opt_roomID;
+  roomExists roomID;
+  opt_player_id <- chessPlayerGame[gameID];
+  player_id = rmvOptionFromPlayerID opt_player_id;
+  isPlayer player_id _sender;
+  blk <- & BLOCKNUMBER;
+  opt_dispute_time <- rewardDisputeTime[roomID];
+  dispute_time = rmvOptionFromBNum opt_dispute_time;
+  isDisputeTimeExceeded blk dispute_time;
+  opt_gameID_opponent <- chessGameGame[gameID];
+  gameID_opponent = rmvOptionFromGameID opt_gameID_opponent;
+  chessClassGame[gameID] := uint32_two;
+  chessClassGame[gameID_opponent] := uint32_two;
+  e = {_eventname: "Game under dispute"; gameID: gameID; gameID_opponent: gameID_opponent};
+  event e
+end
+
+transition unlockPay(genuine_game_list: List(ByStr32))
+  isOracle;
+  forall genuine_game_list unlockGame;
+  e = {_eventname: "Games set as genuine"; genuine_game_list: genuine_game_list};
+  event e
+end
+
+transition redeem(roomID: String, gameID: ByStr32)
+  roomExists roomID;
+  ended roomID;
+  notRedeemed roomID _sender;
+  redeem_amount <- winAmount[roomID][_sender];
+  opt_redeem_status <- redeemStatus[roomID][_sender];
+  redeem_status = rmvOptionFromIsPlaying opt_redeem_status;
+  can_redeem = negb redeem_status;
+  opt_game_status <- chessClassGame[gameID];
+  game_status = getValueUint32 opt_game_status;
+  is_genuine = builtin eq game_status uint32_one;
+  is_true = andb can_redeem is_genuine;
+  match is_true with
+    | False  => 
+      err = CodeCannotRedeem;
+      ThrowError err
+    | True =>
+      match redeem_amount with
+      | Some amt => 
+        redeemStatus[roomID][_sender] := bool_true;
+        callForTreasury amt _sender
+      | None =>
+        err = CodeNothingToRedeem;
+        ThrowError err
+      end
+  end;
+  e = {_eventname: "Reward Redeemed"; roomID: roomID; gameID: gameID};
+  event e
+end
+
+transition changeRoomCreationFee(board1_fee: Uint128, board2_fee: Uint128, board3_fee: Uint128, board4_fee: Uint128, board5_fee: Uint128, board6_fee: Uint128)
+  isOwner; 
+  boardOneFeeZIL:= board1_fee;
+  boardTwoFeeZIL:= board2_fee;
+  boardThreeFeeZIL:= board3_fee;
+  boardFourFeeZIL:= board4_fee;
+  boardFiveFeeZIL:= board5_fee;
+  boardSixFeeZIL:= board6_fee;
+  e = {_eventname : "Board Fees Chnaged"; sender: _sender};
+  event e
+end
+
+transition RecipientAcceptTransferFrom(
+  initiator : ByStr20,
+  sender : ByStr20,
+  recipient : ByStr20,
+  amount : Uint128
+)
+end
+
+transition TransferFromSuccessCallBack(
+  initiator : ByStr20,
+  sender : ByStr20,
+  recipient : ByStr20,
+  amount : Uint128
+)
+end
+
+transition TransferSuccessCallBack(
+  sender : ByStr20,
+  recipient : ByStr20,
+  amount : Uint128
+)
+end
